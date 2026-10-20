@@ -19,7 +19,7 @@ _BALANCE_SHEET_CSV = (
 
 
 def _client() -> TestClient:
-    return TestClient(create_app(FinanceService(":memory:", ":memory:")))
+    return TestClient(create_app(FinanceService(":memory:", ":memory:", ":memory:")))
 
 
 def _upload(client: TestClient, company: str = "测试公司", year: int = 2025):
@@ -71,3 +71,28 @@ def test_upload_missing_company():
         data={"company_name": "", "fiscal_year": "2025"},
     )
     assert resp.status_code == 400
+
+
+def test_memory_api():
+    client = _client()
+    resp = client.post(
+        "/api/memory", json={"key": "unit_pref", "value": "万元", "kind": "preference"}
+    )
+    assert resp.status_code == 200
+    items = client.get("/api/memory").json()["items"]
+    assert any(i["key"] == "unit_pref" for i in items)
+    assert client.delete("/api/memory/unit_pref").json()["deleted"] == "unit_pref"
+    assert client.delete("/api/memory/unit_pref").status_code == 404
+
+
+def test_ask_remembers_last_company():
+    client = _client()
+    _upload(client)
+    # 第一次带公司名提问，记忆写入 last_company
+    client.post("/api/ask", json={"query": "测试公司2025年资产总计是多少？"})
+    # 第二次不提公司名，应续接上次公司
+    resp = client.post("/api/ask", json={"query": "2025年资产总计是多少？"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert "total_assets=10000.0" in body["answer"]

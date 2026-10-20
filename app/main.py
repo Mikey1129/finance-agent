@@ -12,6 +12,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -26,6 +27,13 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 class AskRequest(BaseModel):
     query: str
     thread_id: str | None = None
+
+
+class MemorySetRequest(BaseModel):
+    key: str
+    value: Any
+    kind: str = "reusable"
+    ttl_seconds: int | None = None
 
 
 def create_app(service: FinanceService | None = None) -> FastAPI:
@@ -86,6 +94,20 @@ def create_app(service: FinanceService | None = None) -> FastAPI:
         if not run:
             raise HTTPException(status_code=404, detail="run not found")
         return run
+
+    @application.get("/api/memory")
+    def memory_list() -> dict:
+        return {"items": svc.memory_items()}
+
+    @application.post("/api/memory")
+    def memory_set(req: MemorySetRequest) -> dict:
+        return svc.set_memory(req.key, req.value, kind=req.kind, ttl_seconds=req.ttl_seconds)
+
+    @application.delete("/api/memory/{key}")
+    def memory_delete(key: str) -> dict:
+        if not svc.delete_memory(key):
+            raise HTTPException(status_code=404, detail="memory key not found")
+        return {"deleted": key}
 
     @application.get("/")
     def index() -> FileResponse:

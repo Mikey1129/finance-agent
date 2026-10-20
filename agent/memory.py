@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -99,6 +101,127 @@ class MemoryStore:
         if kind is not None:
             items = [i for i in items if i.kind == kind]
         return items
+
+
+class SqliteMemoryStore(MemoryStore):
+    """长期记忆的 SQLite 持久化实现（阶段 4）。
+
+    接口与进程内 MemoryStore 完全一致（set/get/update/delete/invalidate/
+    cleanup_expired/search），但落盘到 SQLite，跨会话/跨重启保留。铁律不变：
+    财务相关信息必须带来源、过期自动删除、删除/失效规则明确。
+    """
+
+    _SCHEMA = """
+    CREATE TABLE IF NOT EXISTS memory_items (
+        key         TEXT PRIMARY KEY,
+        value       TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        source      TEXT,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL,
+        expires_at  TEXT
+    );
+    """
+
+    def __init__(self, path: str = "storage/memory.db"):
+        self.path = path
+        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn.executescript(self._SCHEMA)
+
+    def _now(self) -> str:
+        return datetime.now().isoformat(timespec="microseconds")
+
+    def _to_item(self, row: tuple) -> MemoryItem:
+        key, value, kind, source, created_at, updated_at, expires_at = row
+        return MemoryItem(
+            key=key, value=json.loads(value), kind=kind, source=source,
+            created_at=datetime.fromisoformat(created_at),
+            updated_at=datetime.fromisoformat(updated_at),
+            expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
+        )
+
+    def set(
+        self,
+        key: str,
+        value: Any,
+        kind: str = "reusable",
+        source: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> MemoryItem:
+        now = datetime.now()
+        expires_at = now + timedelta(seconds=ttl_seconds) if ttl_seconds is not None else None
+        item = MemoryItem(
+            key=key, value=value, kind=kind, source=source,
+            created_at=now, updated_at=now, expires_at=expires_at,
+        )
+        self.conn.execute(
+            "INSERT OR REPLACE INTO memory_items "
+            "(key, value, kind, source, created_at, updated_at, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                key, json.dumps(value, ensure_ascii=False), kind, source,
+                now.isoformat(timespec="microseconds"),
+                now.isoformat(timespec="microseconds"),
+                expires_at.isoformat(timespec="microseconds") if expires_at else None,
+            ),
+        )
+        self.conn.commit()
+        return item
+
+    def get(self, key: str) -> Any | None:
+        row = self.conn.execute(
+            "SELECT key, value, kind, source, created_at, updated_at, expires_at "
+            "FROM memory_items WHERE key = ?",
+            (key,),
+        ).fetchone()
+        if row is None:
+            return None
+        item = self._to_item(row)
+        if item.expired():
+            self.delete(key)
+            return None
+        return item.value
+
+    def update(self, key: str, value: Any) -> bool:
+        if self.get(key) is None:
+            return False
+        self.conn.execute(
+            "UPDATE memory_items SET value = ?, updated_at = ? WHERE key = ?",
+            (json.dumps(value, ensure_ascii=False), self._now(), key),
+        )
+        self.conn.commit()
+        return True
+
+    def delete(self, key: str) -> bool:
+        cur = self.conn.execute("DELETE FROM memory_items WHERE key = ?", (key,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def invalidate(self, key: str) -> bool:
+        return self.delete(key)
+
+    def cleanup_expired(self) -> int:
+        cur = self.conn.execute(
+            "DELETE FROM memory_items WHERE expires_at IS NOT NULL AND expires_at < ?",
+            (self._now(),),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def search(self, kind: str | None = None) -> list[MemoryItem]:
+        self.cleanup_expired()
+        if kind is None:
+            rows = self.conn.execute(
+                "SELECT key, value, kind, source, created_at, updated_at, expires_at "
+                "FROM memory_items ORDER BY updated_at DESC"
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT key, value, kind, source, created_at, updated_at, expires_at "
+                "FROM memory_items WHERE kind = ? ORDER BY updated_at DESC",
+                (kind,),
+            ).fetchall()
+        return [self._to_item(r) for r in rows]
 
 
 class SessionStore:

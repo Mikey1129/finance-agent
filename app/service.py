@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from agent import AgentGraph
 from agent.checkpoint import Checkpointer
+from agent.memory import SqliteMemoryStore
 from domain import StatementType
 from finance.store import Store
 from ingestion.excel_parser import parse_csv, parse_excel
@@ -53,9 +54,11 @@ class FinanceService:
         self,
         db_path: str = "storage/finance.duckdb",
         checkpoint_path: str = "storage/checkpoints.db",
+        memory_path: str = "storage/memory.db",
     ):
         self.store = Store(db_path)
         self.checkpointer = Checkpointer(checkpoint_path)
+        self.memory = SqliteMemoryStore(memory_path)
         self._chunks: list = []
         self._graph: AgentGraph | None = None  # 懒构建，ingest 后失效
 
@@ -123,13 +126,21 @@ class FinanceService:
 
     # -- 问答 ---------------------------------------------------------------
     def ask(self, query: str, thread_id: str | None = None) -> dict:
-        """对已入库财报提问，返回结构化结果（答案/意图/证据/冲突/缺失）。"""
+        """对已入库财报提问，返回结构化结果（答案/意图/证据/冲突/缺失）。
+
+        长期记忆接入：把「最近分析公司」作为 company_name 兜底传入 graph，
+        ContextResolver 的「新指令优先」逻辑会让 query 里的公司覆盖记忆公司，
+        用户不提公司名时则续接上次分析对象。
+        """
         graph = self._get_graph()
         out = graph.run(
             query,
+            company_name=self.memory.get("last_company"),
             known_companies=self.companies() or None,
             thread_id=thread_id,
         )
+        if out.get("company_name"):
+            self.memory.set("last_company", out["company_name"], kind="preference")
         return {
             "run_id": out.get("run_id"),
             "thread_id": out.get("thread_id"),
@@ -179,3 +190,16 @@ class FinanceService:
 
     def get_run(self, run_id: str) -> dict | None:
         return self.store.get_analysis_run(run_id)
+
+    # -- 长期记忆 -----------------------------------------------------------
+    def memory_items(self) -> list[dict]:
+        """列出全部长期记忆（偏好/可复用信息，跨会话持久化）。"""
+        return [i.model_dump(mode="json") for i in self.memory.search()]
+
+    def set_memory(
+        self, key: str, value, kind: str = "reusable", ttl_seconds: int | None = None
+    ) -> dict:
+        return self.memory.set(key, value, kind=kind, ttl_seconds=ttl_seconds).model_dump(mode="json")
+
+    def delete_memory(self, key: str) -> bool:
+        return self.memory.delete(key)

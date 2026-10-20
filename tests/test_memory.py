@@ -1,6 +1,6 @@
 """agent.memory 长期记忆与会话状态测试：读写/更新/失效/删除规则。"""
 
-from agent.memory import MemoryItem, MemoryStore, SessionStore
+from agent.memory import MemoryItem, MemoryStore, SessionStore, SqliteMemoryStore
 
 
 def test_set_and_get():
@@ -60,3 +60,31 @@ def test_session_history():
     assert ss.get_history("t1", max_turns=1) == ["那净利率呢"]
     ss.clear("t1")
     assert ss.get_history("t1") == []
+
+
+# -- SqliteMemoryStore（持久化，阶段 4）------------------------------------
+def test_sqlite_set_get_update_delete(tmp_path):
+    m = SqliteMemoryStore(str(tmp_path / "mem.db"))
+    m.set("k1", "v1", kind="preference")
+    assert m.get("k1") == "v1"
+    assert m.update("k1", "v2") is True
+    assert m.get("k1") == "v2"
+    assert m.update("不存在", "x") is False
+    assert m.delete("k1") is True
+    assert m.get("k1") is None
+
+
+def test_sqlite_persists_across_reopen(tmp_path):
+    path = str(tmp_path / "mem.db")
+    SqliteMemoryStore(path).set("k", {"company": "公牛集团", "year": 2024}, kind="project")
+    # 重新打开同一文件，数据仍在（跨会话持久化）
+    assert SqliteMemoryStore(path).get("k") == {"company": "公牛集团", "year": 2024}
+
+
+def test_sqlite_expiry_and_search(tmp_path):
+    m = SqliteMemoryStore(str(tmp_path / "mem.db"))
+    m.set("gone", "y", ttl_seconds=0)
+    assert m.get("gone") is None  # 立即过期自动删除
+    m.set("a", 1, kind="preference")
+    m.set("b", 2, kind="project")
+    assert {i.key for i in m.search(kind="preference")} == {"a"}
