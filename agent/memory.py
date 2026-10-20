@@ -34,7 +34,7 @@ class MemoryItem(BaseModel):
 
     def expired(self, now: datetime | None = None) -> bool:
         now = now or datetime.now()
-        return self.expires_at is not None and now > self.expires_at
+        return self.expires_at is not None and now >= self.expires_at
 
 
 class MemoryStore:
