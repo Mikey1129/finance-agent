@@ -12,7 +12,7 @@ FinRAG（财报数值推理 RAG）的升级版 —— 从「RAG 玩具」到「�
 | 阶段 | 状态 | 交付物 |
 |---|---|---|
 | 1 数据基础 | ✅ 基本完成 | ReportDoc/FinancialFact/Provenance + Excel/CSV + 原生 PDF + 结构切块 + DuckDB + 基础校验 |
-| 2 分析能力 | 未开始 | 科目映射 + 指标注册中心 + 多期比较 + 工具注册/Schema |
+| 2 分析能力 | ✅ 基本完成 | 科目映射 + 指标注册中心（16 指标）+ 多期比较 + 工具注册/Schema |
 | 3 Agent 闭环 | 未开始 | LangGraph + Intent Router + AgentState + Function Calling + 混合召回 |
 | 4 产品界面 | 未开始 | 上传/指标卡片/对话/引用/导出 + Skill + 长期记忆 |
 | 5 企业增强 | 未开始 | 复杂 PDF 视觉 + 多公司比较 + 审计/权限 + Docker |
@@ -43,9 +43,17 @@ finance-agent/
 
 **评测 A（字段级数据提取）**：对 FinQA dev.json 前 200 样本的 2956 个财报数值单元格跑 `parse_number`，解析成功率 **98.07%**（剩余 1.29% 为非数字标签文本）。覆盖 `$` 符号、括号负数、千分位、并列格式「A ( B )」、单位标注等中文财报数字格式。
 
+## 阶段 2 成果（分析能力）
+
+- **指标注册中心**：`finance/metrics.py` 第一版 6 组 16 指标（成长/盈利/偿债/现金流/运营效率/财务质量），`MetricDefinition` 存公式与口径，`MetricResult` 保留分子/分母/输入科目以便追溯；分母为 0 或缺科目时返回 `insufficient_data` / `divide_by_zero`（不编造假数）。
+- **工具注册与 Schema**：`agent/tools.py` 5 个核心工具（`query_financial_fact` / `compute_metric` / `compare_periods` / `retrieve_evidence` / `validate_result`），输入用 Pydantic Schema、统一返回 `ToolResult`（状态/数据/单位/口径/来源/错误），`ToolRegistry` 导出 Function Calling 风格 schema。
+- **科目映射与多期比较**：`finance/taxonomy.py` 归一化/前缀剥离/紧凑匹配；`compute_series` 跨期序列。
+
+**评测 B（指标计算）**：`evaluation/eval_metrics.py` 用真实财报（公牛集团 2024 年报）端到端计算全部指标，断言关键盈利/偿债指标落在合理区间，防止科目映射污染导致指标静默跑偏；公式与边界（分母为 0 / 缺科目 / 无上期 / scope 过滤）由 `tests/test_metrics.py` + `tests/test_tools.py` 覆盖。
+
 ## 快速开始
 
 ```bash
 pip install -r requirements.txt
-pytest            # 运行测试（22 个用例）
+pytest            # 运行测试（59 个用例）
 ```
