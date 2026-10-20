@@ -37,3 +37,52 @@ def test_convert_to_yuan():
 def test_item_zh():
     assert item_zh("revenue") == "营业收入"
     assert item_zh("net_profit") == "净利润"
+
+
+def test_map_item_strips_op_prefix():
+    """利润表/现金流量表行首运算符号前缀应被剥离。"""
+    assert map_item("减：营业外支出") == "non_operating_expenses"
+    assert map_item("减：所得税费用") == "income_tax_expense"
+    assert map_item("加：营业外收入") == "non_operating_income"
+    assert map_item("加：其他收益") == "other_income"
+    assert map_item("其中：营业收入") == "revenue"
+
+
+def test_map_item_strips_number_prefix():
+    """附注表数字序号前缀应被剥离。"""
+    assert map_item("2.应收款项融资") == "notes_receivable"
+    assert map_item("1.归属于母公司股东的净利润（净亏损以“-”号填列）") == "net_profit"
+
+
+def test_map_item_strips_cn_number_prefix():
+    """中文序号前缀（一、/二、/五、）应被剥离。"""
+    assert map_item("一、营业总收入") == "revenue"
+    assert map_item("一、营业收入") == "revenue"
+    assert map_item("二、营业利润（亏损以“－”号填列）") == "operating_profit"
+    assert map_item("三、利润总额（亏损总额以“－”号填列）") == "total_profit"
+    assert map_item("五、净利润（净亏损以“－”号填列）") == "net_profit"
+    assert map_item("五、现金及现金等价物净增加额") == "net_change_in_cash"
+
+
+def test_map_item_prefix_strip_does_not_overreach():
+    """剥离前缀后仍不命中的科目，应回退归一化原名，不被误映射。"""
+    assert map_item("加：会计政策变更") == "加:会计政策变更"
+    assert map_item("其中：数据资源") == "其中:数据资源"
+
+
+def test_map_item_new_income_items():
+    """补充的利润表标准科目。"""
+    assert map_item("其他收益") == "other_income"
+    assert map_item("利息费用") == "interest_expense"
+    assert map_item("信用减值损失（损失以“-”号填列）") == "credit_impairment_loss"
+    assert map_item("资产减值损失") == "asset_impairment_loss"
+    assert map_item("基本每股收益(元/股)") == "basic_eps"
+    assert map_item("稀释每股收益") == "diluted_eps"
+
+
+def test_map_item_cost_items_not_confused():
+    """营业成本与营业总成本是不同科目，不能互相污染（否则毛利率算错）。"""
+    assert map_item("营业成本") == "cost_of_revenue"
+    assert map_item("营业总成本") == "total_operating_costs"
+    assert map_item("二、营业总成本") == "total_operating_costs"
+    assert map_item("其中：营业成本") == "cost_of_revenue"

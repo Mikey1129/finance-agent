@@ -7,7 +7,7 @@ import pytest
 from domain import StatementType
 from evaluation.eval_balance_sheet import eval_balance_sheet
 from ingestion.excel_parser import parse_tabular
-from ingestion.pdf_parser import _find_header_idx
+from ingestion.pdf_parser import _find_header_idx, parse_pdf
 
 _STORAGE = Path(__file__).resolve().parent.parent / "storage"
 _REAL_PDF = _STORAGE / "公牛集团-2024年报.pdf"
@@ -79,3 +79,26 @@ def test_real_pdf_consolidated_balance_sheet_balanced():
     assert p2024.assets == pytest.approx(20_494_034_490.68)
     assert p2024.liabilities == pytest.approx(4_619_054_119.92)
     assert p2024.equity == pytest.approx(15_874_980_370.76)
+
+
+@pytest.mark.skipif(not _REAL_PDF.exists(), reason="真实年报 PDF 未在本地")
+def test_real_pdf_statements_are_separated():
+    """表格筛选：利润表/现金流量表应只含各自科目，不再与资产负债表混同。"""
+    from finance.taxonomy import STANDARD_ITEMS
+
+    income = parse_pdf(str(_REAL_PDF), "公牛集团", 2024, StatementType.INCOME_STATEMENT)
+    cash = parse_pdf(str(_REAL_PDF), "公牛集团", 2024, StatementType.CASH_FLOW)
+
+    income_items = {f.standard_item for f in income.facts if f.standard_item in STANDARD_ITEMS}
+    cash_items = {f.standard_item for f in cash.facts if f.standard_item in STANDARD_ITEMS}
+
+    # 利润表应含营业收入/净利润，且不含资产负债表科目
+    assert "revenue" in income_items
+    assert "net_profit" in income_items
+    assert "total_assets" not in income_items
+    assert "cash_and_equivalents" not in income_items
+
+    # 现金流量表应含经营现金流净额，且不含利润表/资产负债表科目
+    assert "operating_cash_flow" in cash_items
+    assert "revenue" not in cash_items
+    assert "total_assets" not in cash_items

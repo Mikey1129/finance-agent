@@ -43,11 +43,18 @@ class PdfParseResult:
 
 _HEADER_MARKERS = {"项目", "科目", "指标", "报表项目", "Items", "Item", "Financial Data"}
 
-# 报表标题 -> 合并范围。标题出现在每张报表首页的页面文本里。
-_SCOPE_TITLES = (
-    ("母公司资产负债表", "parent_only"),
-    ("合并资产负债表", "consolidated"),
+# 报表标题 -> (报表类型, 合并范围)。三大主表锚点 + 权益变动表（非主表，遇到即结束主表正文）。
+_REPORT_TITLES = (
+    ("合并资产负债表", StatementType.BALANCE_SHEET, "consolidated"),
+    ("母公司资产负债表", StatementType.BALANCE_SHEET, "parent_only"),
+    ("合并利润表", StatementType.INCOME_STATEMENT, "consolidated"),
+    ("母公司利润表", StatementType.INCOME_STATEMENT, "parent_only"),
+    ("合并现金流量表", StatementType.CASH_FLOW, "consolidated"),
+    ("母公司现金流量表", StatementType.CASH_FLOW, "parent_only"),
 )
+
+# 非主表报表标题（股东权益变动表等），命中后不再产出主表事实
+_NON_TARGET_TITLES = ("所有者权益变动表", "股东权益变动表")
 
 
 def _find_header_idx(table: list) -> int | None:
@@ -69,11 +76,17 @@ def _find_header_idx(table: list) -> int | None:
     return None
 
 
-def _detect_scope(text: str) -> str | None:
-    """从页面文本识别合并范围；仅在出现明确报表标题时返回。"""
-    for title, scope in _SCOPE_TITLES:
+def _match_title(text: str) -> tuple[StatementType | None, str | None] | None:
+    """从词文本识别报表标题。
+
+    命中主表标题返回 (statement_type, scope)；命中非主表标题返回 (None, None)；否则 None。
+    """
+    for title, st, scope in _REPORT_TITLES:
         if title in text:
-            return scope
+            return st, scope
+    for title in _NON_TARGET_TITLES:
+        if title in text:
+            return None, None
     return None
 
 
@@ -109,47 +122,83 @@ def parse_pdf(
     statement_type: StatementType,
     currency: str = "CNY",
 ) -> PdfParseResult:
-    """解析原生文本 PDF，逐页提取文本与表格。
+    """解析原生文本 PDF，按报表标题定位并只提取目标报表的表格。
 
-    跨页继承：维护「当前表头列结构 / 单位 / 合并范围」三个状态，
-    遇到新表头（含年份或标记的行）则重置/更新，续页表则复用上一表头。
+    用「标题词 y 坐标 + 表格 bbox」的事件流精确归属：标题在上、表格在下 → 表格属新报表；
+    标题在下、表格在上 → 表格属上一报表（标题跨页到下一页的常见排版）。
+    跨页继承：同一报表内维护表头/单位，续页表复用上一表头。
+    无任何主表标题时回退到「全部按传入 statement_type 解析」（旧行为）。
     """
     report_doc = build_report_doc(path, company_name, fiscal_year, statement_type)
     pages: list[PageContent] = []
     facts: list[FinancialFact] = []
     provenance: list[Provenance] = []
 
-    last_headers: list | None = None
-    current_unit: str | None = None
-    current_scope: str = "consolidated"
-
     with pdfplumber.open(path) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text() or ""
-            tables = page.extract_tables() or []
-            pages.append(PageContent(page_number=page.page_number, text=text, tables=tables))
-            page_unit = detect_unit(text)
-            page_scope = _detect_scope(text)
+        page_list = list(pdf.pages)
+        # 预扫：是否存在主表标题锚点（决定是否按标题筛选）
+        has_anchor = any(
+            any(_match_title(w["text"]) is not None for w in page.extract_words())
+            for page in page_list
+        )
 
-            for table in tables:
-                header_idx = _find_header_idx(table)
+        current_statement: StatementType | None = None if has_anchor else statement_type
+        current_scope: str = "consolidated"
+        last_headers: list | None = None
+        current_unit: str | None = None
+
+        for page in page_list:
+            text = page.extract_text() or ""
+            page_unit = detect_unit(text)
+
+            # 事件流：标题词 + 表格，按 y 从顶到底排序
+            events: list[tuple[float, str, object]] = []
+            for word in page.extract_words():
+                m = _match_title(word["text"])
+                if m is not None:
+                    events.append((word["top"], "title", m))
+            table_objs = page.find_tables()
+            for t in table_objs:
+                events.append((t.bbox[1], "table", t))
+            events.sort(key=lambda e: e[0])
+
+            pages.append(
+                PageContent(
+                    page_number=page.page_number,
+                    text=text,
+                    tables=[t.extract() for t in table_objs],
+                )
+            )
+
+            for _, kind, payload in events:
+                if kind == "title":
+                    st, scope = payload
+                    current_statement = st
+                    if scope is not None:
+                        current_scope = scope
+                        # 新报表开始：重置表头/单位继承（标题下方才是新报表正文）
+                        last_headers = None
+                        current_unit = None
+                    continue
+
+                if current_statement != statement_type:
+                    continue  # 当前表格不属于目标报表，跳过
+
+                rows = payload.extract()
+                header_idx = _find_header_idx(rows)
                 if header_idx is not None:
-                    # 新表头：重建列结构，若本页标注了单位/合并范围则更新
-                    last_headers = table[header_idx]
-                    rows = table[header_idx + 1 :]
+                    last_headers = rows[header_idx]
+                    data_rows = rows[header_idx + 1 :]
                     if page_unit is not None:
                         current_unit = page_unit
-                    if page_scope is not None:
-                        current_scope = page_scope
                 else:
-                    # 续页表：继承上一表头的列结构（含期间）与单位/范围
                     if last_headers is None:
                         continue  # 尚未出现表头，无法确定列结构，跳过
-                    rows = table
+                    data_rows = rows
 
                 fs = _table_to_facts(
                     last_headers,
-                    rows,
+                    data_rows,
                     company_name,
                     fiscal_year,
                     statement_type,

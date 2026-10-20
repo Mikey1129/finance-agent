@@ -54,6 +54,7 @@ STANDARD_ITEMS: dict[str, tuple[str, StatementType]] = {
     # 利润表
     "revenue": ("营业收入", StatementType.INCOME_STATEMENT),
     "cost_of_revenue": ("营业成本", StatementType.INCOME_STATEMENT),
+    "total_operating_costs": ("营业总成本", StatementType.INCOME_STATEMENT),
     "gross_profit": ("毛利", StatementType.INCOME_STATEMENT),
     "selling_expenses": ("销售费用", StatementType.INCOME_STATEMENT),
     "administrative_expenses": ("管理费用", StatementType.INCOME_STATEMENT),
@@ -67,6 +68,12 @@ STANDARD_ITEMS: dict[str, tuple[str, StatementType]] = {
     "non_operating_income": ("营业外收入", StatementType.INCOME_STATEMENT),
     "non_operating_expenses": ("营业外支出", StatementType.INCOME_STATEMENT),
     "income_tax_expense": ("所得税费用", StatementType.INCOME_STATEMENT),
+    "other_income": ("其他收益", StatementType.INCOME_STATEMENT),
+    "interest_expense": ("利息费用", StatementType.INCOME_STATEMENT),
+    "credit_impairment_loss": ("信用减值损失", StatementType.INCOME_STATEMENT),
+    "asset_impairment_loss": ("资产减值损失", StatementType.INCOME_STATEMENT),
+    "basic_eps": ("基本每股收益", StatementType.INCOME_STATEMENT),
+    "diluted_eps": ("稀释每股收益", StatementType.INCOME_STATEMENT),
     # 现金流量表
     "operating_cash_flow": ("经营活动现金流净额", StatementType.CASH_FLOW),
     "investing_cash_flow": ("投资活动现金流净额", StatementType.CASH_FLOW),
@@ -134,7 +141,7 @@ RAW_TO_STANDARD: dict[str, str] = {
     "销售收入": "revenue",
     "营业成本": "cost_of_revenue",
     "主营业务成本": "cost_of_revenue",
-    "营业总成本": "cost_of_revenue",
+    "营业总成本": "total_operating_costs",
     "毛利": "gross_profit",
     "毛利润": "gross_profit",
     "销售费用": "selling_expenses",
@@ -150,6 +157,12 @@ RAW_TO_STANDARD: dict[str, str] = {
     "营业外收入": "non_operating_income",
     "营业外支出": "non_operating_expenses",
     "所得税费用": "income_tax_expense",
+    "其他收益": "other_income",
+    "利息费用": "interest_expense",
+    "信用减值损失": "credit_impairment_loss",
+    "资产减值损失": "asset_impairment_loss",
+    "基本每股收益": "basic_eps",
+    "稀释每股收益": "diluted_eps",
     # 现金流量表
     "经营活动产生的现金流量净额": "operating_cash_flow",
     "经营活动现金流量净额": "operating_cash_flow",
@@ -223,21 +236,50 @@ def normalize_name(raw: str) -> str:
     return s
 
 
+# 科目名行首前缀（真实财报常见）：运算符号（加/减/其中，全角或半角冒号）、数字序号（1. / 2． / 3、 / 4)）、中文序号（一、 / 二、 / 三、）
+_OP_PREFIX_RE = re.compile(r"^(?:加|减|其中)\s*[：:]\s*")
+_NUM_PREFIX_RE = re.compile(r"^\d{1,2}\s*[．.、)]\s*")
+_CN_PREFIX_RE = re.compile(r"^[一二三四五六七八九十]+\s*[、．.]\s*")
+
+
+def _strip_item_prefix(s: str) -> str:
+    """剥离科目名行首的运算/序号前缀，循环至稳定。
+
+    真实财报科目名常带前缀，剥离后才能命中标准科目：
+      减：营业外支出 → 营业外支出；2.应收款项融资 → 应收款项融资；五、净利润 → 净利润。
+    只处理「行首前缀」，不动科目主体；剥离后不命中时 map_item 仍回退到归一化原名。
+    """
+    s = s.strip()
+    while True:
+        prev = s
+        s = _OP_PREFIX_RE.sub("", s)
+        s = _NUM_PREFIX_RE.sub("", s)
+        s = _CN_PREFIX_RE.sub("", s)
+        s = s.strip()
+        if s == prev:
+            return s
+
+
 def map_item(raw_name: str) -> str:
     """原始科目名 -> 标准科目标识符。
 
-    匹配顺序：精确匹配 -> 归一化后精确匹配 -> 归一化后小写匹配。
+    匹配顺序：归一化精确匹配 -> 剥离前缀后匹配 -> 紧凑（去空白）匹配。
     未命中时返回归一化后的原始名（保留信息，后续阶段补映射 / 标记 unknown）。
     """
     norm = normalize_name(raw_name)
-    if norm in RAW_TO_STANDARD:
-        return RAW_TO_STANDARD[norm]
-    low = norm.lower()
-    if low in RAW_TO_STANDARD:
-        return RAW_TO_STANDARD[low]
-    compact = _compact(low)
-    if compact in _COMPACT_INDEX:
-        return _COMPACT_INDEX[compact]
+    candidates = [norm]
+    stripped = _strip_item_prefix(norm)
+    if stripped and stripped != norm:
+        candidates.append(stripped)
+    for cand in candidates:
+        if cand in RAW_TO_STANDARD:
+            return RAW_TO_STANDARD[cand]
+        low = cand.lower()
+        if low in RAW_TO_STANDARD:
+            return RAW_TO_STANDARD[low]
+        compact = _compact(low)
+        if compact in _COMPACT_INDEX:
+            return _COMPACT_INDEX[compact]
     return norm  # 未映射，保留原样（调用方可据此判定 unknown）
 
 
