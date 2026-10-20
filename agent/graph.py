@@ -12,10 +12,13 @@ LangGraph 负责流程控制（方案 5.8）；具体 Hook 在 execute 节点内
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from agent.checkpoint import Checkpointer
 from agent.context import ContextPolicy, ContextResolver
 from agent.evidence import EvidenceAssembler
 from agent.hooks import (
@@ -29,7 +32,7 @@ from agent.router import route
 from agent.state import AgentState, Intent
 from agent.tools import ToolResult, ToolStatus, build_tools
 from finance.store import Store
-from domain import EvidenceChunk, FinancialFact
+from domain import AnalysisRun, EvidenceChunk, FinancialFact, ToolCallRecord
 
 
 class GraphState(TypedDict, total=False):
@@ -55,9 +58,19 @@ class GraphState(TypedDict, total=False):
 class AgentGraph:
     """财务分析 Agent 状态图：注入 Store / chunks，编译确定性工作流。"""
 
-    def __init__(self, store: Store, chunks: list[EvidenceChunk] | None = None):
+    def __init__(
+        self,
+        store: Store,
+        chunks: list[EvidenceChunk] | None = None,
+        checkpointer: Checkpointer | None = None,
+        record_runs: bool = False,
+        rule_version: str = "deterministic-v1",
+    ):
         self.store = store
         self.chunks = chunks or []
+        self.checkpointer = checkpointer
+        self.record_runs = record_runs
+        self.rule_version = rule_version
         self.registry = build_tools(store, self.chunks)
         self.hooks = HookManager([ParamRangeHook(), BudgetHook(), SourceIntegrityHook()])
         self.resolver = ContextResolver()
@@ -189,11 +202,73 @@ class AgentGraph:
         company_name: str | None = None,
         periods: list[str] | None = None,
         known_companies: list[str] | None = None,
+        thread_id: str | None = None,
+        run_id: str | None = None,
     ) -> GraphState:
+        thread_id = thread_id or "default"
+        run_id = run_id or uuid.uuid4().hex[:12]
+
+        # 多轮续接：从 checkpoint 继承上一轮的上下文（公司/期间/意图）
+        prev = self.checkpointer.load(thread_id) if self.checkpointer else None
+        if prev:
+            company_name = company_name or prev.get("company_name")
+            periods = periods or prev.get("periods", [])
+            known_companies = known_companies or prev.get("known_companies")
+
         initial: GraphState = {
+            "thread_id": thread_id,
+            "run_id": run_id,
             "user_query": query,
             "company_name": company_name,
             "periods": periods or [],
             "known_companies": known_companies or [],
         }
-        return self.graph.invoke(initial)
+        out = self.graph.invoke(initial)
+
+        # 落库运行记录（可回放审计）
+        if self.record_runs:
+            self.store.insert_analysis_run(self._build_run(run_id, thread_id, out))
+
+        # 保存会话快照（供下一轮多轮续接）
+        if self.checkpointer:
+            self.checkpointer.save(
+                thread_id,
+                {
+                    "company_name": out.get("company_name"),
+                    "periods": out.get("periods", []),
+                    "intent": out.get("intent"),
+                    "known_companies": known_companies or [],
+                },
+            )
+
+        return out
+
+    def _build_run(self, run_id: str, thread_id: str, state: GraphState) -> AnalysisRun:
+        """从图执行结果构造 AnalysisRun 运行记录（可回放）。"""
+        tool_calls = [
+            ToolCallRecord(
+                tool=r.tool,
+                status=r.status.value,
+                summary=self._summarize(r),
+                source_refs=[f"{s.kind}:{s.ref_id}" for s in r.sources],
+            )
+            for r in state.get("tool_results", [])
+        ]
+        validation = list(state.get("contradictions", []))
+        if state.get("missing_evidence"):
+            validation.append("缺失证据: " + "；".join(state["missing_evidence"]))
+        return AnalysisRun(
+            run_id=run_id,
+            thread_id=thread_id,
+            user_query=state["user_query"],
+            company_name=state.get("company_name"),
+            periods=state.get("periods", []),
+            intent=state.get("intent"),
+            status=state.get("status", "success"),
+            plan=state.get("plan", []),
+            tool_calls=tool_calls,
+            validation_summary=validation,
+            final_answer=state.get("final_answer"),
+            rule_version=self.rule_version,
+            finished_at=datetime.now(),
+        )

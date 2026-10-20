@@ -12,7 +12,7 @@ from typing import Any
 
 import duckdb
 
-from domain import FinancialFact, Provenance, ReportDoc
+from domain import AnalysisRun, FinancialFact, Provenance, ReportDoc
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS report_docs (
@@ -79,6 +79,26 @@ CREATE TABLE IF NOT EXISTS evidence_chunks (
     source_span     VARCHAR,
     text            VARCHAR
 );
+
+CREATE TABLE IF NOT EXISTS analysis_runs (
+    run_id             VARCHAR PRIMARY KEY,
+    thread_id          VARCHAR,
+    user_query         VARCHAR,
+    company_name       VARCHAR,
+    periods            VARCHAR,
+    intent             VARCHAR,
+    status             VARCHAR,
+    plan               VARCHAR,
+    tool_calls         VARCHAR,
+    validation_summary VARCHAR,
+    final_answer       VARCHAR,
+    data_version       VARCHAR,
+    rule_version       VARCHAR,
+    model_version      VARCHAR,
+    prompt_version     VARCHAR,
+    created_at         VARCHAR,
+    finished_at        VARCHAR
+);
 """
 
 
@@ -136,6 +156,19 @@ class Store:
             values,
         )
 
+    def insert_analysis_run(self, run: AnalysisRun) -> None:
+        """写入一条分析运行记录（可回放审计，方案 5.5）。"""
+        d = run.model_dump()
+        for col in ("periods", "plan", "tool_calls", "validation_summary"):
+            d[col] = json.dumps(d.get(col, []), ensure_ascii=False)
+        cols = list(d.keys())
+        placeholders = ", ".join("?" for _ in cols)
+        values = [_val(d[c]) for c in cols]
+        self.conn.execute(
+            f"INSERT INTO analysis_runs ({', '.join(cols)}) VALUES ({placeholders})",
+            values,
+        )
+
     # -- 查询 ---------------------------------------------------------------
     def query_facts(
         self,
@@ -190,6 +223,40 @@ class Store:
 
     def count_facts(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM financial_facts").fetchone()[0]
+
+    def get_analysis_run(self, run_id: str) -> dict | None:
+        rows = self._rows_as_dicts(
+            "SELECT * FROM analysis_runs WHERE run_id = ?", [run_id]
+        )
+        return self._decode_run(rows[0]) if rows else None
+
+    def query_analysis_runs(
+        self,
+        thread_id: str | None = None,
+        company_name: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        sql = "SELECT * FROM analysis_runs WHERE 1=1"
+        params: list[Any] = []
+        if thread_id is not None:
+            sql += " AND thread_id = ?"
+            params.append(thread_id)
+        if company_name is not None:
+            sql += " AND company_name = ?"
+            params.append(company_name)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        return [self._decode_run(r) for r in self._rows_as_dicts(sql, params)]
+
+    def count_analysis_runs(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0]
+
+    @staticmethod
+    def _decode_run(row: dict) -> dict:
+        """把 JSON 字符串字段还原为 list/dict。"""
+        for col in ("periods", "plan", "tool_calls", "validation_summary"):
+            row[col] = json.loads(row[col]) if row[col] else []
+        return row
 
     def close(self) -> None:
         self.conn.close()

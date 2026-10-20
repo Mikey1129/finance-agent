@@ -20,6 +20,7 @@ from .financial_fact import (
 )
 from .provenance import Provenance
 from .evidence_chunk import ChunkType, EvidenceChunk
+from .analysis_run import AnalysisRun, ToolCallRecord
 
 __all__ = [
     "AccountingStandard",
@@ -33,4 +34,6 @@ __all__ = [
     "Provenance",
     "ChunkType",
     "EvidenceChunk",
+    "AnalysisRun",
+    "ToolCallRecord",
 ]
