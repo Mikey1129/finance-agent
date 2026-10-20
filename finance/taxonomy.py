@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import re
+
 from domain.financial_fact import StatementType
 
 # 科目映射规则版本（FinancialFact.mapping_rule_version 引用它，满足规则 7）
@@ -27,6 +29,28 @@ STANDARD_ITEMS: dict[str, tuple[str, StatementType]] = {
     "total_current_liabilities": ("流动负债合计", StatementType.BALANCE_SHEET),
     "total_liabilities": ("负债合计", StatementType.BALANCE_SHEET),
     "total_equity": ("所有者权益合计", StatementType.BALANCE_SHEET),
+    "trading_financial_assets": ("交易性金融资产", StatementType.BALANCE_SHEET),
+    "notes_receivable": ("应收票据", StatementType.BALANCE_SHEET),
+    "prepayments": ("预付款项", StatementType.BALANCE_SHEET),
+    "other_receivables": ("其他应收款", StatementType.BALANCE_SHEET),
+    "long_term_equity_investment": ("长期股权投资", StatementType.BALANCE_SHEET),
+    "construction_in_progress": ("在建工程", StatementType.BALANCE_SHEET),
+    "intangible_assets": ("无形资产", StatementType.BALANCE_SHEET),
+    "goodwill": ("商誉", StatementType.BALANCE_SHEET),
+    "deferred_tax_assets": ("递延所得税资产", StatementType.BALANCE_SHEET),
+    "contract_liabilities": ("合同负债", StatementType.BALANCE_SHEET),
+    "notes_payable": ("应付票据", StatementType.BALANCE_SHEET),
+    "advances_from_customers": ("预收款项", StatementType.BALANCE_SHEET),
+    "employee_benefits_payable": ("应付职工薪酬", StatementType.BALANCE_SHEET),
+    "taxes_payable": ("应交税费", StatementType.BALANCE_SHEET),
+    "other_payables": ("其他应付款", StatementType.BALANCE_SHEET),
+    "long_term_borrowings": ("长期借款", StatementType.BALANCE_SHEET),
+    "paid_in_capital": ("实收资本", StatementType.BALANCE_SHEET),
+    "capital_reserve": ("资本公积", StatementType.BALANCE_SHEET),
+    "surplus_reserve": ("盈余公积", StatementType.BALANCE_SHEET),
+    "undistributed_profit": ("未分配利润", StatementType.BALANCE_SHEET),
+    "total_non_current_assets": ("非流动资产合计", StatementType.BALANCE_SHEET),
+    "total_non_current_liabilities": ("非流动负债合计", StatementType.BALANCE_SHEET),
     # 利润表
     "revenue": ("营业收入", StatementType.INCOME_STATEMENT),
     "cost_of_revenue": ("营业成本", StatementType.INCOME_STATEMENT),
@@ -37,6 +61,12 @@ STANDARD_ITEMS: dict[str, tuple[str, StatementType]] = {
     "operating_profit": ("营业利润", StatementType.INCOME_STATEMENT),
     "total_profit": ("利润总额", StatementType.INCOME_STATEMENT),
     "net_profit": ("净利润", StatementType.INCOME_STATEMENT),
+    "taxes_and_surcharges": ("税金及附加", StatementType.INCOME_STATEMENT),
+    "rnd_expenses": ("研发费用", StatementType.INCOME_STATEMENT),
+    "investment_income": ("投资收益", StatementType.INCOME_STATEMENT),
+    "non_operating_income": ("营业外收入", StatementType.INCOME_STATEMENT),
+    "non_operating_expenses": ("营业外支出", StatementType.INCOME_STATEMENT),
+    "income_tax_expense": ("所得税费用", StatementType.INCOME_STATEMENT),
     # 现金流量表
     "operating_cash_flow": ("经营活动现金流净额", StatementType.CASH_FLOW),
     "investing_cash_flow": ("投资活动现金流净额", StatementType.CASH_FLOW),
@@ -71,6 +101,32 @@ RAW_TO_STANDARD: dict[str, str] = {
     "所有者权益合计": "total_equity",
     "股东权益合计": "total_equity",
     "净资产": "total_equity",
+    "交易性金融资产": "trading_financial_assets",
+    "应收票据": "notes_receivable",
+    "应收款项融资": "notes_receivable",
+    "预付款项": "prepayments",
+    "预付账款": "prepayments",
+    "其他应收款": "other_receivables",
+    "长期股权投资": "long_term_equity_investment",
+    "在建工程": "construction_in_progress",
+    "无形资产": "intangible_assets",
+    "商誉": "goodwill",
+    "递延所得税资产": "deferred_tax_assets",
+    "合同负债": "contract_liabilities",
+    "应付票据": "notes_payable",
+    "预收款项": "advances_from_customers",
+    "预收账款": "advances_from_customers",
+    "应付职工薪酬": "employee_benefits_payable",
+    "应交税费": "taxes_payable",
+    "其他应付款": "other_payables",
+    "长期借款": "long_term_borrowings",
+    "实收资本": "paid_in_capital",
+    "股本": "paid_in_capital",
+    "资本公积": "capital_reserve",
+    "盈余公积": "surplus_reserve",
+    "未分配利润": "undistributed_profit",
+    "非流动资产合计": "total_non_current_assets",
+    "非流动负债合计": "total_non_current_liabilities",
     # 利润表
     "营业收入": "revenue",
     "营业总收入": "revenue",
@@ -88,6 +144,12 @@ RAW_TO_STANDARD: dict[str, str] = {
     "利润总额": "total_profit",
     "净利润": "net_profit",
     "归属于母公司股东的净利润": "net_profit",
+    "税金及附加": "taxes_and_surcharges",
+    "研发费用": "rnd_expenses",
+    "投资收益": "investment_income",
+    "营业外收入": "non_operating_income",
+    "营业外支出": "non_operating_expenses",
+    "所得税费用": "income_tax_expense",
     # 现金流量表
     "经营活动产生的现金流量净额": "operating_cash_flow",
     "经营活动现金流量净额": "operating_cash_flow",
@@ -141,12 +203,23 @@ UNIT_SCALE: dict[str, float] = {
 # ---------------------------------------------------------------------------
 # 归一化与映射
 # ---------------------------------------------------------------------------
+def _compact(s: str) -> str:
+    """去所有空白（用于紧凑匹配）。"""
+    return re.sub(r"\s+", "", s)
+
+
+# 紧凑索引：键为去空白后的科目名，处理「所有者权益（或股东\n权益）合计」这类带换行/括号的科目
+_COMPACT_INDEX = {_compact(k): v for k, v in RAW_TO_STANDARD.items()}
+
+
 def normalize_name(raw: str) -> str:
-    """归一化科目名：去首尾空白、全角空格转半角、统一括号。"""
+    """归一化科目名：去换行/制表、全角转半角、去括号同义补充、压缩空白。"""
     s = raw.strip()
-    s = s.replace("　", " ").replace("　", " ")  # 全角空格
-    s = s.replace("（", "(").replace("）", ")")        # 全角括号
+    s = re.sub(r"[\n\r\t]+", " ", s)          # PDF 单元格常带换行
+    s = s.replace("　", " ").replace("（", "(").replace("）", ")")
     s = s.replace("：", ":").replace("，", ",")
+    s = re.sub(r"\([^)]*\)", "", s)           # 去括号同义补充：「所有者权益（或股东权益）合计」
+    s = re.sub(r"\s+", " ", s).strip()
     return s
 
 
@@ -162,6 +235,9 @@ def map_item(raw_name: str) -> str:
     low = norm.lower()
     if low in RAW_TO_STANDARD:
         return RAW_TO_STANDARD[low]
+    compact = _compact(low)
+    if compact in _COMPACT_INDEX:
+        return _COMPACT_INDEX[compact]
     return norm  # 未映射，保留原样（调用方可据此判定 unknown）
 
 

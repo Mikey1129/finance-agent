@@ -12,7 +12,7 @@ import pdfplumber
 
 from domain import FinancialFact, Provenance, ReportDoc, StatementType
 from finance.taxonomy import RULES_VERSION
-from ingestion.excel_parser import build_report_doc, parse_tabular
+from ingestion.excel_parser import build_report_doc, detect_unit, parse_tabular
 
 
 @dataclass
@@ -52,6 +52,7 @@ def _table_to_facts(
     statement_type: StatementType,
     report_id: str,
     source_file: str | None,
+    unit: str | None = None,
 ) -> list[FinancialFact]:
     """把单个 PDF 表格尽力转为财务事实（找表头行后复用 parse_tabular）。"""
     if not table or len(table) < 2:
@@ -82,6 +83,7 @@ def _table_to_facts(
         fiscal_year,
         statement_type,
         report_id,
+        unit=unit,
         source_file=source_file,
     )
 
@@ -104,11 +106,12 @@ def parse_pdf(
             text = page.extract_text() or ""
             tables = page.extract_tables() or []
             pages.append(PageContent(page_number=page.page_number, text=text, tables=tables))
+            page_unit = detect_unit(text)
 
             for table in tables:
                 fs = _table_to_facts(
                     table, company_name, fiscal_year, statement_type,
-                    report_doc.report_id, path,
+                    report_doc.report_id, path, unit=page_unit,
                 )
                 for f in fs:
                     f.provenance_id = f"prov-{f.fact_id}"

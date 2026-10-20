@@ -78,47 +78,46 @@ def validate_fact(fact: FinancialFact) -> list[ValidationIssue]:
 def check_balance_sheet(facts: list[FinancialFact], tolerance: float = 1e-6) -> ValidationReport:
     """资产负债表平衡校验：资产总计 ≈ 负债合计 + 所有者权益合计。
 
-    tolerance 为相对容差（浮点误差）。返回校验报告。
+    按期间分组校验（真实财报含多期，不能互相覆盖）。tolerance 为相对容差（浮点误差）。
     """
     report = ValidationReport()
-    by_item: dict[str, float] = {}
+    by_period: dict[str, dict[str, float]] = {}
     for f in facts:
         if f.statement_type is not StatementType.BALANCE_SHEET:
             continue
         if f.data_status is DataStatus.PRESENT and f.value is not None:
-            by_item[f.standard_item] = f.value
+            by_period.setdefault(f.period or "", {})[f.standard_item] = f.value
 
-    assets = by_item.get("total_assets")
-    liabilities = by_item.get("total_liabilities")
-    equity = by_item.get("total_equity")
+    for period, items in by_period.items():
+        assets = items.get("total_assets")
+        liabilities = items.get("total_liabilities")
+        equity = items.get("total_equity")
+        label = f"期间 {period}" if period else "（未标期间）"
 
-    missing = [
-        name
-        for name, val in [
-            ("total_assets", assets),
-            ("total_liabilities", liabilities),
-            ("total_equity", equity),
+        missing = [
+            name
+            for name, val in [
+                ("total_assets", assets),
+                ("total_liabilities", liabilities),
+                ("total_equity", equity),
+            ]
+            if val is None
         ]
-        if val is None
-    ]
-    if missing:
-        report.add(
-            ValidationIssue("warning", "balance_sheet", f"缺少科目无法校验平衡: {missing}")
-        )
-        return report
-
-    rhs = liabilities + equity
-    diff = abs(assets - rhs)
-    if assets != 0:
-        rel = diff / abs(assets)
-    else:
-        rel = diff
-    if rel > tolerance:
-        report.add(
-            ValidationIssue(
-                "error",
-                "balance_sheet",
-                f"资产负债表不平衡: 资产={assets} 负债+权益={rhs} 差={diff:.2f} 相对误差={rel:.2e}",
+        if missing:
+            report.add(
+                ValidationIssue("warning", "balance_sheet", f"{label} 缺少科目无法校验平衡: {missing}")
             )
-        )
+            continue
+
+        rhs = liabilities + equity
+        diff = abs(assets - rhs)
+        rel = diff / abs(assets) if assets != 0 else diff
+        if rel > tolerance:
+            report.add(
+                ValidationIssue(
+                    "error",
+                    "balance_sheet",
+                    f"{label} 资产负债表不平衡: 资产={assets:.2f} 负债+权益={rhs:.2f} 相对误差={rel:.2e}",
+                )
+            )
     return report

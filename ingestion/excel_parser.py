@@ -111,10 +111,13 @@ def parse_number(raw) -> tuple[float | None, DataStatus]:
 # 单位检测
 # ---------------------------------------------------------------------------
 def detect_unit(text: str | None) -> str | None:
-    """从文本提取单位，如「单位：万元」「（单位：千元）」「in millions」。"""
+    """从文本提取单位，如「单位：万元」「（单位：千元）」「in millions」。
+
+    直接在原始文本搜索单位关键词（不用 normalize_name，否则会误删「（单位：千元）」）。
+    """
     if not text:
         return None
-    s = normalize_name(str(text))
+    s = str(text)
     for u in _UNIT_FALLBACK:
         if u in s:
             return u
@@ -150,6 +153,23 @@ def extract_period(header: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 # 表格解析
 # ---------------------------------------------------------------------------
+_NON_VALUE_HEADERS = {"附注", "备注", "注释", "附註", "notes", "note"}
+
+
+def _is_value_column(header) -> bool:
+    """判断列是否为数值/期间列（跳过附注/备注等文字列）。"""
+    if header is None:
+        return True  # 无列头，保守当数值列
+    h = str(header).strip()
+    if not h:
+        return True
+    if h.lower() in _NON_VALUE_HEADERS:
+        return False
+    if extract_period(h) is not None:
+        return True
+    return any(ch.isdigit() for ch in h)
+
+
 def parse_tabular(
     headers: list,
     rows: list[list],
@@ -169,6 +189,9 @@ def parse_tabular(
     """
     facts: list[FinancialFact] = []
     n = len(headers)
+    value_cols = [
+        c for c in range(1, n) if _is_value_column(headers[c] if c < len(headers) else None)
+    ]
     for r_idx, row in enumerate(rows):
         if not row:
             continue
@@ -176,7 +199,7 @@ def parse_tabular(
         if not raw_item or raw_item in {"项目", "科目", "指标"}:
             continue
         std = map_item(raw_item)
-        for c_idx in range(1, n):
+        for c_idx in value_cols:
             cell = row[c_idx] if c_idx < len(row) else None
             value, status = parse_number(cell)
 
