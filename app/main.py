@@ -71,6 +71,8 @@ def create_app(service: FinanceService | None = None) -> FastAPI:
                 fiscal_year,
                 statement_type=statement_type,
             )
+        except PermissionError as exc:  # 阶段 5：越权上传回 403
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except Exception as exc:  # 解析失败回 400 而非 500，便于前端提示
             raise HTTPException(status_code=400, detail=f"解析失败: {exc}") from exc
         finally:
@@ -92,6 +94,11 @@ def create_app(service: FinanceService | None = None) -> FastAPI:
     @application.get("/api/runs")
     def runs(limit: int = 50) -> dict:
         return {"runs": svc.runs(limit=limit)}
+
+    @application.get("/api/audit")
+    def audit(user_id: str | None = None, action: str | None = None, limit: int = 100) -> dict:
+        """审计日志（阶段 5：谁在何时对什么资源做了什么）。"""
+        return {"events": svc.audit_events(user_id=user_id, action=action, limit=limit)}
 
     @application.get("/api/runs/{run_id}")
     def run_detail(run_id: str) -> dict:

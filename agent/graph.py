@@ -26,6 +26,7 @@ from agent.hooks import (
     BudgetHook,
     HookManager,
     ParamRangeHook,
+    PermissionHook,
     PromptInjectionHook,
     SourceIntegrityHook,
 )
@@ -33,6 +34,7 @@ from agent.planner import Planner
 from agent.router import route
 from agent.state import AgentState, Intent
 from agent.tools import ToolResult, ToolStatus, build_tools
+from auth import AccessPolicy, AuditLog, User
 from finance.store import Store
 from domain import AnalysisRun, EvidenceChunk, FinancialFact, ToolCallRecord
 
@@ -41,6 +43,7 @@ class GraphState(TypedDict, total=False):
     thread_id: str
     run_id: str
     user_query: str
+    user: User | None
     company_name: str | None
     periods: list[str]
     known_companies: list[str]
@@ -68,6 +71,8 @@ class AgentGraph:
         record_runs: bool = False,
         rule_version: str = "deterministic-v1",
         llm_planner: LLMPlanner | None = None,
+        access_policy: AccessPolicy | None = None,
+        audit_log: AuditLog | None = None,
     ):
         self.store = store
         self.chunks = chunks or []
@@ -75,9 +80,17 @@ class AgentGraph:
         self.record_runs = record_runs
         self.rule_version = rule_version
         self.llm_planner = llm_planner
+        self.access_policy = access_policy
+        self.audit_log = audit_log
         self.registry = build_tools(store, self.chunks)
         self.hooks = HookManager(
-            [ParamRangeHook(), BudgetHook(), SourceIntegrityHook(), PromptInjectionHook()]
+            [
+                ParamRangeHook(),
+                PermissionHook(access_policy),
+                BudgetHook(),
+                SourceIntegrityHook(),
+                PromptInjectionHook(),
+            ]
         )
         self.resolver = ContextResolver()
         self.planner = Planner()
@@ -139,8 +152,9 @@ class AgentGraph:
 
     def _execute(self, state: GraphState) -> dict:
         results: list[ToolResult] = []
+        user = state.get("user")
         for step in state.get("plan", []):
-            results.append(self.hooks.invoke(self.registry, step["tool"], **step["args"]))
+            results.append(self.hooks.invoke(self.registry, step["tool"], user=user, **step["args"]))
         return {"tool_results": results}
 
     def _validate(self, state: GraphState) -> dict:
@@ -220,6 +234,7 @@ class AgentGraph:
         known_companies: list[str] | None = None,
         thread_id: str | None = None,
         run_id: str | None = None,
+        user: User | None = None,
     ) -> GraphState:
         thread_id = thread_id or "default"
         run_id = run_id or uuid.uuid4().hex[:12]
@@ -235,6 +250,7 @@ class AgentGraph:
             "thread_id": thread_id,
             "run_id": run_id,
             "user_query": query,
+            "user": user,
             "company_name": company_name,
             "periods": periods or [],
             "known_companies": known_companies or [],
@@ -244,6 +260,9 @@ class AgentGraph:
         # 落库运行记录（可回放审计）
         if self.record_runs:
             self.store.insert_analysis_run(self._build_run(run_id, thread_id, out))
+
+        # 审计日志（阶段 5）：记录提问与权限拒绝
+        self._audit(out, user)
 
         # 保存会话快照（供下一轮多轮续接）
         if self.checkpointer:
@@ -258,6 +277,27 @@ class AgentGraph:
             )
 
         return out
+
+    def _audit(self, state: GraphState, user: User | None) -> None:
+        """记录审计事件（阶段 5）：每次提问 + 权限拒绝。无 audit_log 时为 no-op。"""
+        if self.audit_log is None:
+            return
+        uid = user.user_id if user else None
+        self.audit_log.record(
+            "ask", user_id=uid, resource_type="company",
+            resource_id=state.get("company_name"), result=state.get("status", "success"),
+        )
+        for r in state.get("tool_results", []):
+            if (
+                r.error
+                and r.error.type == "hook_blocked"
+                and r.error.message
+                and "无权访问" in r.error.message
+            ):
+                self.audit_log.record(
+                    "access_denied", user_id=uid, resource_type="company",
+                    result="denied", detail=r.error.message,
+                )
 
     def _build_run(self, run_id: str, thread_id: str, state: GraphState) -> AnalysisRun:
         """从图执行结果构造 AnalysisRun 运行记录（可回放）。"""
@@ -276,6 +316,7 @@ class AgentGraph:
         return AnalysisRun(
             run_id=run_id,
             thread_id=thread_id,
+            user_id=state.get("user").user_id if state.get("user") else None,
             user_query=state["user_query"],
             company_name=state.get("company_name"),
             periods=state.get("periods", []),

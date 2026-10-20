@@ -33,6 +33,7 @@ class AnalysisRun(BaseModel):
 
     run_id: str = Field(description="运行唯一 ID")
     thread_id: str = Field(description="所属会话线程 ID")
+    user_id: str | None = Field(default=None, description="触发用户 ID（阶段 5 权限接入）")
     user_query: str = Field(description="用户原始提问")
 
     company_name: str | None = None

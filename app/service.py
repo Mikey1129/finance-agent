@@ -21,6 +21,7 @@ from agent import AgentGraph
 from agent.checkpoint import Checkpointer
 from agent.memory import SqliteMemoryStore
 from agent.skills import build_skills, list_skill_meta
+from auth import AccessPolicy, AuditLog, User
 from domain import FinancialFact, StatementType
 from finance.metrics import METRIC_DEFINITIONS, compute_metrics, compute_series
 from finance.store import Store
@@ -73,10 +74,13 @@ class FinanceService:
         db_path: str = "storage/finance.duckdb",
         checkpoint_path: str = "storage/checkpoints.db",
         memory_path: str = "storage/memory.db",
+        audit_path: str = "storage/audit.db",
     ):
         self.store = Store(db_path)
         self.checkpointer = Checkpointer(checkpoint_path)
         self.memory = SqliteMemoryStore(memory_path)
+        self.audit_log = AuditLog(audit_path)
+        self.access_policy = AccessPolicy()
         self._chunks: list = []
         self._graph: AgentGraph | None = None  # 懒构建，ingest 后失效
 
@@ -88,8 +92,35 @@ class FinanceService:
         fiscal_year: int,
         statement_type: str | None = None,
         is_excel: bool = False,
+        user: User | None = None,
     ) -> dict:
-        """入库一个财报文件（PDF 自动三大报表；CSV/Excel 按指定报表类型）。"""
+        """入库一个财报文件（PDF 自动三大报表；CSV/Excel 按指定报表类型）。
+
+        阶段 5：user 传入时先做写权限校验（越权 raise PermissionError 并记审计），
+        成功后记录 ingest 审计事件。
+        """
+        if user is not None and not self.access_policy.can_write(user, company_name):
+            self.audit_log.record(
+                "access_denied", user_id=user.user_id, resource_type="company",
+                resource_id=company_name, result="denied", detail=f"无权上传公司 {company_name}",
+            )
+            raise PermissionError(f"无权上传公司: {company_name}")
+
+        result = self._ingest_impl(path, company_name, fiscal_year, statement_type, is_excel)
+        self.audit_log.record(
+            "ingest", user_id=user.user_id if user else None, resource_type="company",
+            resource_id=company_name, result="success", detail=f"facts={result.get('facts')}",
+        )
+        return result
+
+    def _ingest_impl(
+        self,
+        path: str,
+        company_name: str,
+        fiscal_year: int,
+        statement_type: str | None = None,
+        is_excel: bool = False,
+    ) -> dict:
         path = str(path)
         lower = path.lower()
         if lower.endswith(".pdf"):
@@ -143,12 +174,14 @@ class FinanceService:
         return StatementType.BALANCE_SHEET
 
     # -- 问答 ---------------------------------------------------------------
-    def ask(self, query: str, thread_id: str | None = None) -> dict:
+    def ask(self, query: str, thread_id: str | None = None, user: User | None = None) -> dict:
         """对已入库财报提问，返回结构化结果（答案/意图/证据/冲突/缺失）。
 
         长期记忆接入：把「最近分析公司」作为 company_name 兜底传入 graph，
         ContextResolver 的「新指令优先」逻辑会让 query 里的公司覆盖记忆公司，
         用户不提公司名时则续接上次分析对象。
+
+        阶段 5：user 传入时透传给 graph（工具层权限校验 + 审计）。
         """
         graph = self._get_graph()
         out = graph.run(
@@ -156,6 +189,7 @@ class FinanceService:
             company_name=self.memory.get("last_company"),
             known_companies=self.companies() or None,
             thread_id=thread_id,
+            user=user,
         )
         if out.get("company_name"):
             self.memory.set("last_company", out["company_name"], kind="preference")
@@ -191,6 +225,8 @@ class FinanceService:
                 self._chunks,
                 checkpointer=self.checkpointer,
                 record_runs=True,
+                access_policy=self.access_policy,
+                audit_log=self.audit_log,
             )
         return self._graph
 
@@ -205,6 +241,10 @@ class FinanceService:
     def runs(self, limit: int = 50) -> list[dict]:
         """历史运行记录（AnalysisRun，可回放审计）。"""
         return self.store.query_analysis_runs(limit=limit)
+
+    def audit_events(self, user_id: str | None = None, action: str | None = None, limit: int = 100) -> list[dict]:
+        """审计日志（阶段 5：谁在何时对什么资源做了什么）。"""
+        return [e.model_dump(mode="json") for e in self.audit_log.query(user_id=user_id, action=action, limit=limit)]
 
     def get_run(self, run_id: str) -> dict | None:
         return self.store.get_analysis_run(run_id)

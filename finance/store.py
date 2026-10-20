@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS evidence_chunks (
 CREATE TABLE IF NOT EXISTS analysis_runs (
     run_id             VARCHAR PRIMARY KEY,
     thread_id          VARCHAR,
+    user_id            VARCHAR,
     user_query         VARCHAR,
     company_name       VARCHAR,
     periods            VARCHAR,
