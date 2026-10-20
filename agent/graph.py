@@ -26,6 +26,7 @@ from agent.hooks import (
     BudgetHook,
     HookManager,
     ParamRangeHook,
+    PromptInjectionHook,
     SourceIntegrityHook,
 )
 from agent.planner import Planner
@@ -75,7 +76,9 @@ class AgentGraph:
         self.rule_version = rule_version
         self.llm_planner = llm_planner
         self.registry = build_tools(store, self.chunks)
-        self.hooks = HookManager([ParamRangeHook(), BudgetHook(), SourceIntegrityHook()])
+        self.hooks = HookManager(
+            [ParamRangeHook(), BudgetHook(), SourceIntegrityHook(), PromptInjectionHook()]
+        )
         self.resolver = ContextResolver()
         self.planner = Planner()
         self.assembler = EvidenceAssembler()

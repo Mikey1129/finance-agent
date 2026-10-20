@@ -21,6 +21,7 @@ from agent.hooks import (
     BudgetHook,
     HookManager,
     ParamRangeHook,
+    PromptInjectionHook,
     SourceIntegrityHook,
 )
 from agent.tools import ToolResult, ToolStatus, build_tools
@@ -73,7 +74,7 @@ class BaseSkill(ABC):
         self.chunks = chunks or []
         self.registry = build_tools(store, self.chunks)
         self.hooks = HookManager(
-            [ParamRangeHook(), BudgetHook(), SourceIntegrityHook()]
+            [ParamRangeHook(), BudgetHook(), SourceIntegrityHook(), PromptInjectionHook()]
         )
 
     def _invoke(self, tool: str, **args) -> ToolResult:
