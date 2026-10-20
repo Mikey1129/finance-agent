@@ -181,11 +181,13 @@ def parse_tabular(
     unit: str | None = None,
     period_map: dict[int, str] | None = None,
     period_type: PeriodType | None = None,
+    consolidation_scope: str = "consolidated",
     source_file: str | None = None,
 ) -> list[FinancialFact]:
     """核心表格解析：第一列=科目名，其余列=各期数值。
 
     period_map: {列索引 -> 期间}；缺省时从表头自动提取年份。
+    consolidation_scope: consolidated=合并报表 / parent_only=母公司单体。
     """
     facts: list[FinancialFact] = []
     n = len(headers)
@@ -223,6 +225,7 @@ def parse_tabular(
                     period=period,
                     period_type=period_type or PeriodType.ANNUAL,
                     statement_type=statement_type,
+                    consolidation_scope=consolidation_scope,
                     data_status=status,
                     mapping_rule_version=RULES_VERSION,
                 )

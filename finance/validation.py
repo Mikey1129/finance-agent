@@ -78,21 +78,24 @@ def validate_fact(fact: FinancialFact) -> list[ValidationIssue]:
 def check_balance_sheet(facts: list[FinancialFact], tolerance: float = 1e-6) -> ValidationReport:
     """资产负债表平衡校验：资产总计 ≈ 负债合计 + 所有者权益合计。
 
-    按期间分组校验（真实财报含多期，不能互相覆盖）。tolerance 为相对容差（浮点误差）。
+    按 (期间, 合并范围) 分组校验——真实财报含多期、合并/母公司各一套，
+    不同分组不能互相覆盖。tolerance 为相对容差（浮点误差）。
     """
     report = ValidationReport()
-    by_period: dict[str, dict[str, float]] = {}
+    by_group: dict[tuple[str, str], dict[str, float]] = {}
     for f in facts:
         if f.statement_type is not StatementType.BALANCE_SHEET:
             continue
         if f.data_status is DataStatus.PRESENT and f.value is not None:
-            by_period.setdefault(f.period or "", {})[f.standard_item] = f.value
+            key = (f.period or "", f.consolidation_scope)
+            by_group.setdefault(key, {})[f.standard_item] = f.value
 
-    for period, items in by_period.items():
+    for (period, scope), items in by_group.items():
         assets = items.get("total_assets")
         liabilities = items.get("total_liabilities")
         equity = items.get("total_equity")
-        label = f"期间 {period}" if period else "（未标期间）"
+        scope_label = {"parent_only": "母公司", "consolidated": "合并"}.get(scope, scope)
+        label = f"期间 {period}（{scope_label}）" if period else f"（未标期间·{scope_label}）"
 
         missing = [
             name
