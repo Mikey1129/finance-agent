@@ -19,6 +19,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from agent.checkpoint import Checkpointer
+from agent.llm import LLMPlanner
 from agent.context import ContextPolicy, ContextResolver
 from agent.evidence import EvidenceAssembler
 from agent.hooks import (
@@ -65,12 +66,14 @@ class AgentGraph:
         checkpointer: Checkpointer | None = None,
         record_runs: bool = False,
         rule_version: str = "deterministic-v1",
+        llm_planner: LLMPlanner | None = None,
     ):
         self.store = store
         self.chunks = chunks or []
         self.checkpointer = checkpointer
         self.record_runs = record_runs
         self.rule_version = rule_version
+        self.llm_planner = llm_planner
         self.registry = build_tools(store, self.chunks)
         self.hooks = HookManager([ParamRangeHook(), BudgetHook(), SourceIntegrityHook()])
         self.resolver = ContextResolver()
@@ -111,6 +114,16 @@ class AgentGraph:
 
     def _plan(self, state: GraphState) -> dict:
         intent = Intent(state["intent"]) if state.get("intent") else None
+        # 深度归因（路径 C）启用 LLM Function Calling 动态规划；其余走规则 Planner。
+        if self.llm_planner and intent is Intent.ATTRIBUTION:
+            calls = self.llm_planner.plan(
+                state["user_query"],
+                self.registry.schemas(),
+                company_name=state.get("company_name"),
+                periods=state.get("periods", []),
+            )
+            if calls:
+                return {"plan": [{"tool": c.tool, "args": c.args} for c in calls]}
         steps = self.planner.plan(
             intent,
             query=state["user_query"],
