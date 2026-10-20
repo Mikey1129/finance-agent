@@ -32,6 +32,13 @@ _FACT_WORDS = ("多少", "是多少", "金额", "数值", "几多", "多少元")
 # 指标英文别名（name 已是中文，补少量英文/缩写）
 _METRIC_ALIASES = {"ROE": "roe", "roe": "roe", "ROA": "roa", "roa": "roa"}
 
+# 科目口语别名（用户 query 常用简称 → 标准科目标识符；财报原文科目走 taxonomy）
+_ITEM_ALIASES = {
+    "营收": "revenue",
+    "净利": "net_profit",
+    "现金流": "operating_cash_flow",
+}
+
 # 公司名粗提取：中文 + 「公司/集团/股份/银行/证券」结尾
 _COMPANY_RE = re.compile(r"[一-鿿]{2,12}(?:公司|集团|股份|银行|证券)")
 
@@ -87,6 +94,9 @@ def _match_metrics(query: str) -> list[str]:
 
 def _match_items(query: str) -> list[str]:
     items: list[str] = []
+    for alias, std in _ITEM_ALIASES.items():
+        if alias in query and std not in items:
+            items.append(std)
     for raw, std in RAW_TO_STANDARD.items():
         if raw.isascii():  # 跳过英文 key，避免误命中
             continue

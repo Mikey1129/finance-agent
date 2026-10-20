@@ -1,0 +1,199 @@
+"""agent.graph —— LangGraph 状态图（方案 5.2 / 5.3，阶段 3）。
+
+主工作流：resolve（意图 + 上下文消歧）→ plan（任务规划）→ execute（工具执行）
+→ validate（校验 + 证据组装）→ answer（生成结果）。
+
+第一版为确定性骨架（router / planner 均为规则版，不接 LLM），Function Calling 的
+LLM 决策层阶段 4 接入。CLARIFY 意图在 resolve 后直接短路返回澄清，不走后续节点。
+
+LangGraph 负责流程控制（方案 5.8）；具体 Hook 在 execute 节点内以 HookManager 包住
+工具调用执行。
+"""
+
+from __future__ import annotations
+
+from typing import Any, TypedDict
+
+from langgraph.graph import END, START, StateGraph
+
+from agent.context import ContextPolicy, ContextResolver
+from agent.evidence import EvidenceAssembler
+from agent.hooks import (
+    BudgetHook,
+    HookManager,
+    ParamRangeHook,
+    SourceIntegrityHook,
+)
+from agent.planner import Planner
+from agent.router import route
+from agent.state import AgentState, Intent
+from agent.tools import ToolResult, ToolStatus, build_tools
+from finance.store import Store
+from domain import EvidenceChunk, FinancialFact
+
+
+class GraphState(TypedDict, total=False):
+    thread_id: str
+    run_id: str
+    user_query: str
+    company_name: str | None
+    periods: list[str]
+    known_companies: list[str]
+    intent: str | None
+    metric_codes: list[str]
+    standard_items: list[str]
+    plan: list[dict]
+    tool_results: list[ToolResult]
+    needs_clarification: bool
+    clarification: str | None
+    missing_evidence: list[str]
+    contradictions: list[str]
+    status: str
+    final_answer: str | None
+
+
+class AgentGraph:
+    """财务分析 Agent 状态图：注入 Store / chunks，编译确定性工作流。"""
+
+    def __init__(self, store: Store, chunks: list[EvidenceChunk] | None = None):
+        self.store = store
+        self.chunks = chunks or []
+        self.registry = build_tools(store, self.chunks)
+        self.hooks = HookManager([ParamRangeHook(), BudgetHook(), SourceIntegrityHook()])
+        self.resolver = ContextResolver()
+        self.planner = Planner()
+        self.assembler = EvidenceAssembler()
+        self.context_policy = ContextPolicy()
+        self.graph = self._build()
+
+    # -- 节点 ---------------------------------------------------------------
+    def _resolve(self, state: GraphState) -> dict:
+        query = state["user_query"]
+        base = AgentState(
+            thread_id=state.get("thread_id", "t"),
+            run_id=state.get("run_id", "r"),
+            user_query=query,
+            company_name=state.get("company_name"),
+            periods=state.get("periods", []),
+        )
+        known = state.get("known_companies") or (
+            [state["company_name"]] if state.get("company_name") else None
+        )
+        rc = self.resolver.resolve(query, base, known_companies=known)
+        r = route(query, known_companies=known)
+        result = {
+            "company_name": rc.company_name,
+            "periods": rc.periods,
+            "intent": rc.intent.value if rc.intent else None,
+            "metric_codes": r.metric_codes,
+            "standard_items": r.standard_items,
+            "needs_clarification": rc.needs_clarification,
+            "clarification": rc.clarification,
+        }
+        if rc.needs_clarification:
+            # CLARIFY 短路到 END，不经过 answer 节点，此处直接给出状态与答案
+            result["status"] = "need_clarification"
+            result["final_answer"] = rc.clarification
+        return result
+
+    def _plan(self, state: GraphState) -> dict:
+        intent = Intent(state["intent"]) if state.get("intent") else None
+        steps = self.planner.plan(
+            intent,
+            query=state["user_query"],
+            company_name=state.get("company_name"),
+            periods=state.get("periods", []),
+            metric_codes=state.get("metric_codes", []),
+            standard_items=state.get("standard_items", []),
+        )
+        return {"plan": [{"tool": s.tool, "args": s.args} for s in steps]}
+
+    def _execute(self, state: GraphState) -> dict:
+        results: list[ToolResult] = []
+        for step in state.get("plan", []):
+            results.append(self.hooks.invoke(self.registry, step["tool"], **step["args"]))
+        return {"tool_results": results}
+
+    def _validate(self, state: GraphState) -> dict:
+        facts: list[FinancialFact] = []
+        metrics: dict[str, Any] = {}
+        chunks: list[EvidenceChunk] = []
+        for r in state.get("tool_results", []):
+            if r.tool == "query_financial_fact" and isinstance(r.data, list):
+                facts.extend(r.data)
+            elif r.tool == "compute_metric" and isinstance(r.data, dict):
+                metrics.update(r.data)
+            elif r.tool == "retrieve_evidence" and isinstance(r.data, list):
+                chunks.extend(r.data)
+
+        intent = Intent(state["intent"]) if state.get("intent") else None
+        pack = self.assembler.assemble(
+            state["user_query"], intent=intent,
+            company_name=state.get("company_name"), periods=state.get("periods", []),
+            facts=facts, metrics=metrics, chunks=chunks,
+        )
+        return {
+            "missing_evidence": pack.missing_evidence,
+            "contradictions": pack.contradictions,
+        }
+
+    def _answer(self, state: GraphState) -> dict:
+        if state.get("needs_clarification"):
+            return {"final_answer": state.get("clarification"), "status": "need_clarification"}
+        parts = [self._summarize(r) for r in state.get("tool_results", []) if r.status is ToolStatus.SUCCESS]
+        if state.get("missing_evidence"):
+            parts.append("⚠ 缺失证据: " + "；".join(state["missing_evidence"]))
+        if state.get("contradictions"):
+            parts.append("⚠ 发现冲突: " + "；".join(state["contradictions"]))
+        return {"final_answer": "\n".join(parts) or "未获取到结果", "status": "success"}
+
+    @staticmethod
+    def _summarize(r: ToolResult) -> str:
+        if r.tool == "query_financial_fact":
+            rows = [f"{f.standard_item}={f.value} 元" for f in r.data if f.value is not None]
+            return "财务事实: " + "; ".join(rows) if rows else "财务事实: 无"
+        if r.tool == "compute_metric":
+            rows = [f"{m.name}={m.value:.4f}" for m in r.data.values() if m.computed]
+            return "指标: " + "; ".join(rows) if rows else "指标: 无（数据不足）"
+        if r.tool == "retrieve_evidence":
+            return f"检索到 {len(r.data)} 条文本证据"
+        if r.tool == "validate_result":
+            return f"校验: errors={r.data.errors} warnings={r.data.warnings}"
+        return f"{r.tool}: {r.status.value}"
+
+    # -- 路由 ---------------------------------------------------------------
+    @staticmethod
+    def _route_after_resolve(state: GraphState) -> str:
+        return "clarify" if state.get("needs_clarification") else "plan"
+
+    # -- 编译 ---------------------------------------------------------------
+    def _build(self):
+        g = StateGraph(GraphState)
+        g.add_node("resolve", self._resolve)
+        g.add_node("plan", self._plan)
+        g.add_node("execute", self._execute)
+        g.add_node("validate", self._validate)
+        g.add_node("answer", self._answer)
+
+        g.add_edge(START, "resolve")
+        g.add_conditional_edges("resolve", self._route_after_resolve, {"clarify": END, "plan": "plan"})
+        g.add_edge("plan", "execute")
+        g.add_edge("execute", "validate")
+        g.add_edge("validate", "answer")
+        g.add_edge("answer", END)
+        return g.compile()
+
+    def run(
+        self,
+        query: str,
+        company_name: str | None = None,
+        periods: list[str] | None = None,
+        known_companies: list[str] | None = None,
+    ) -> GraphState:
+        initial: GraphState = {
+            "user_query": query,
+            "company_name": company_name,
+            "periods": periods or [],
+            "known_companies": known_companies or [],
+        }
+        return self.graph.invoke(initial)

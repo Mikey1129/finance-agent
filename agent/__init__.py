@@ -20,6 +20,7 @@ from .hooks import (
 )
 from .memory import MemoryItem, MemoryStore, SessionStore
 from .planner import Planner, PlanStep
+from .graph import AgentGraph, GraphState
 from .tools import (
     BaseTool,
     ComputeMetricTool,
@@ -60,6 +61,8 @@ __all__ = [
     "SessionStore",
     "Planner",
     "PlanStep",
+    "AgentGraph",
+    "GraphState",
     "BaseTool",
     "ComputeMetricTool",
     "ComparePeriodsTool",
