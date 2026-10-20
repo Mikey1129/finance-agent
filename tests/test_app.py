@@ -96,3 +96,39 @@ def test_ask_remembers_last_company():
     body = resp.json()
     assert body["status"] == "success"
     assert "total_assets=10000.0" in body["answer"]
+
+
+def test_overview_returns_metrics():
+    client = _client()
+    _upload(client)
+    j = client.get("/api/company/测试公司/overview?year=2025").json()
+    assert len(j["metrics"]) == 16  # 全 16 指标
+    debt = next(m for m in j["metrics"] if m["code"] == "debt_to_asset_ratio")
+    assert debt["value"] is not None
+    assert abs(debt["value"] - 0.6) < 1e-6  # 负债 6000 / 资产 10000
+    assert j["facts"]  # 关键科目非空
+
+
+def test_export_run_markdown():
+    client = _client()
+    _upload(client)
+    run_id = client.post("/api/ask", json={"query": "测试公司2025年资产总计是多少？"}).json()["run_id"]
+    export = client.get(f"/api/runs/{run_id}/export")
+    assert export.status_code == 200
+    assert "财务分析报告" in export.text
+    assert "total_assets" in export.text
+
+
+def test_skills_api():
+    client = _client()
+    _upload(client)
+    skills = client.get("/api/skills").json()["skills"]
+    assert len(skills) == 5
+    resp = client.post(
+        "/api/skills/financial_statement_analysis/run",
+        json={"company_name": "测试公司", "fiscal_year": 2025},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["summary"]

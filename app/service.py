@@ -20,7 +20,9 @@ from pydantic import BaseModel
 from agent import AgentGraph
 from agent.checkpoint import Checkpointer
 from agent.memory import SqliteMemoryStore
-from domain import StatementType
+from agent.skills import build_skills, list_skill_meta
+from domain import FinancialFact, StatementType
+from finance.metrics import METRIC_DEFINITIONS, compute_metrics, compute_series
 from finance.store import Store
 from ingestion.excel_parser import parse_csv, parse_excel
 from ingestion.pdf_parser import parse_pdf
@@ -28,6 +30,9 @@ from retrieval.chunker import chunk_pages
 
 # PDF 三大报表都要入库（parse_pdf 每次只提取一个目标报表，故循环三次）
 _STATEMENTS = (StatementType.BALANCE_SHEET, StatementType.INCOME_STATEMENT, StatementType.CASH_FLOW)
+
+# 指标概览里做多期趋势的关键指标
+_OVERVIEW_TREND_CODES = ["gross_margin", "net_margin", "roe", "revenue_growth", "net_profit_growth"]
 
 
 def _serialize(obj: Any) -> Any:
@@ -41,6 +46,19 @@ def _serialize(obj: Any) -> Any:
     if isinstance(obj, dict):
         return {k: _serialize(v) for k, v in obj.items()}
     return obj
+
+
+def _metric_card(m) -> dict:
+    """把 MetricResult 转成前端友好的卡片（ratio/growth 显示百分比）。"""
+    kind = METRIC_DEFINITIONS[m.code].kind if m.code in METRIC_DEFINITIONS else ""
+    card = {"code": m.code, "name": m.name, "group": m.group, "is_signal": m.is_signal}
+    if m.computed:
+        card["value"] = round(m.value, 6)
+        card["display"] = f"{m.value:.2%}" if kind in ("ratio", "growth") else f"{m.value:,.2f}"
+    else:
+        card["value"] = None
+        card["display"] = m.status.value
+    return card
 
 
 class FinanceService:
@@ -203,3 +221,63 @@ class FinanceService:
 
     def delete_memory(self, key: str) -> bool:
         return self.memory.delete(key)
+
+    # -- 指标概览 / 报告导出 / 技能 -----------------------------------------
+    def overview(self, company_name: str, fiscal_year: int) -> dict:
+        """指标卡片（全 16 指标当前值）+ 关键指标多期趋势 + 关键科目。"""
+        rows = self.store.query_facts(company_name=company_name, fiscal_year=fiscal_year)
+        facts = [FinancialFact.model_validate(r) for r in rows]
+        if not facts:
+            return {"company": company_name, "year": fiscal_year, "metrics": [], "trends": {}, "facts": []}
+        metrics = compute_metrics(facts, str(fiscal_year), "consolidated")
+        metric_cards = [_metric_card(m) for m in metrics.values()]
+        trends = {
+            c: [_metric_card(m) for m in compute_series(c, facts, "consolidated")]
+            for c in _OVERVIEW_TREND_CODES
+        }
+        key_items = {
+            "revenue", "net_profit", "total_assets",
+            "total_liabilities", "total_equity", "operating_cash_flow",
+        }
+        fact_cards = [
+            {"item": f.standard_item, "value": f.value, "period": f.period}
+            for f in facts if f.standard_item in key_items and f.value is not None
+        ]
+        return {
+            "company": company_name, "year": fiscal_year,
+            "metrics": metric_cards, "trends": trends, "facts": fact_cards,
+        }
+
+    def export_run(self, run_id: str) -> str | None:
+        """把一次运行记录导出为 Markdown 报告（可回放审计的产物）。"""
+        run = self.store.get_analysis_run(run_id)
+        if not run:
+            return None
+        lines = [
+            "# 财务分析报告", "",
+            f"- 问题：{run.get('user_query')}",
+            f"- 公司：{run.get('company_name') or '—'}",
+            f"- 期间：{', '.join(run.get('periods', [])) or '—'}",
+            f"- 意图：{run.get('intent') or '—'}",
+            "", "## 结论", "",
+            run.get("final_answer") or "（无）", "",
+            "## 工具调用", "",
+        ]
+        for tc in run.get("tool_calls", []):
+            src = ", ".join(tc.get("source_refs", []))
+            line = f"- `{tc.get('tool')}`（{tc.get('status')}）：{tc.get('summary')}"
+            lines.append(line + (f" [{src}]" if src else ""))
+        if run.get("validation_summary"):
+            lines += ["", "## 校验", ""]
+            lines += [f"- {v}" for v in run["validation_summary"]]
+        return "\n".join(lines)
+
+    def list_skills(self) -> list[dict]:
+        return list_skill_meta()
+
+    def run_skill(self, code: str, company_name: str, fiscal_year: int | None = None) -> dict | None:
+        """执行一个技能，返回结构化 SkillResult。"""
+        skill = build_skills(self.store, self._chunks).get(code)
+        if skill is None:
+            return None
+        return skill.run(company_name, fiscal_year).model_dump(mode="json")

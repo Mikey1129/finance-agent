@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -34,6 +34,11 @@ class MemorySetRequest(BaseModel):
     value: Any
     kind: str = "reusable"
     ttl_seconds: int | None = None
+
+
+class SkillRunRequest(BaseModel):
+    company_name: str
+    fiscal_year: int | None = None
 
 
 def create_app(service: FinanceService | None = None) -> FastAPI:
@@ -108,6 +113,28 @@ def create_app(service: FinanceService | None = None) -> FastAPI:
         if not svc.delete_memory(key):
             raise HTTPException(status_code=404, detail="memory key not found")
         return {"deleted": key}
+
+    @application.get("/api/company/{company_name}/overview")
+    def overview(company_name: str, year: int) -> dict:
+        return svc.overview(company_name, year)
+
+    @application.get("/api/runs/{run_id}/export")
+    def export_run(run_id: str) -> Response:
+        md = svc.export_run(run_id)
+        if md is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return Response(md, media_type="text/markdown")
+
+    @application.get("/api/skills")
+    def skills() -> dict:
+        return {"skills": svc.list_skills()}
+
+    @application.post("/api/skills/{code}/run")
+    def run_skill(code: str, req: SkillRunRequest) -> dict:
+        result = svc.run_skill(code, req.company_name, req.fiscal_year)
+        if result is None:
+            raise HTTPException(status_code=404, detail="skill not found")
+        return result
 
     @application.get("/")
     def index() -> FileResponse:

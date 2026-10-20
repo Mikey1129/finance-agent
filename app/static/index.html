@@ -11,48 +11,35 @@
     --ok: #3fb950; --warn: #d29922; --err: #f85149;
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-    line-height: 1.6;
-  }
-  .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 60px; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; line-height: 1.6; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 24px 16px 60px; }
   h1 { font-size: 22px; margin: 0 0 4px; }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
-  .card {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 16px 18px; margin-bottom: 16px;
-  }
+  .card { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
   .card h2 { font-size: 15px; margin: 0 0 12px; color: var(--accent); }
   label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 4px; }
   input[type=text], input[type=number], select, textarea {
     width: 100%; background: #0d1117; color: var(--text);
     border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
-    font-size: 14px; font-family: inherit;
-  }
+    font-size: 14px; font-family: inherit; }
   input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); }
-  .row { display: flex; gap: 12px; }
-  .row > div { flex: 1; }
-  button {
-    background: var(--accent); color: #04121f; border: 0; border-radius: 6px;
-    padding: 8px 18px; font-size: 14px; font-weight: 600; cursor: pointer;
-  }
+  .row { display: flex; gap: 12px; } .row > div { flex: 1; }
+  button { background: var(--accent); color: #04121f; border: 0; border-radius: 6px;
+    padding: 8px 18px; font-size: 14px; font-weight: 600; cursor: pointer; }
   button:hover { filter: brightness(1.1); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .chip {
-    background: #1f2937; border: 1px solid var(--border); border-radius: 20px;
-    padding: 3px 12px; font-size: 12px; color: var(--muted);
-  }
+  .chip { background: #1f2937; border: 1px solid var(--border); border-radius: 20px;
+    padding: 3px 12px; font-size: 12px; color: var(--muted); }
   .msg { margin-bottom: 14px; }
   .msg .q { font-weight: 600; margin-bottom: 4px; }
   .msg .a { white-space: pre-wrap; background: #0d1117; border: 1px solid var(--border);
     border-radius: 8px; padding: 10px 12px; }
-  .badge {
-    display: inline-block; font-size: 11px; border-radius: 4px; padding: 1px 7px;
-    margin-right: 6px; vertical-align: middle;
-  }
+  .badge { display: inline-block; font-size: 11px; border-radius: 4px; padding: 1px 7px;
+    margin-right: 6px; vertical-align: middle; }
   .badge.ok { background: rgba(63,185,80,.15); color: var(--ok); }
   .badge.warn { background: rgba(210,153,34,.15); color: var(--warn); }
   .badge.err { background: rgba(248,81,73,.15); color: var(--err); }
@@ -65,6 +52,21 @@
     padding-left: 8px; margin: 4px 0; }
   .evidence b { color: var(--text); }
   .warnline { color: var(--warn); font-size: 13px; }
+  /* 指标卡片 */
+  .mgroup { margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
+  .mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .mcard { background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  .mcard .mn { font-size: 12px; color: var(--muted); }
+  .mcard .mv { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .mcard.signal { border-color: rgba(210,153,34,.5); }
+  .mcard.na .mv { color: var(--muted); font-weight: 400; }
+  .trend { font-size: 12px; color: var(--muted); margin: 4px 0; }
+  .skill-summary { white-space: pre-wrap; background: #0d1117; border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 6px 0; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  a.dl { color: var(--accent); font-size: 12px; text-decoration: none; margin-left: 8px; }
 </style>
 </head>
 <body>
@@ -99,32 +101,49 @@
       <div style="flex:1"><input type="text" id="query" placeholder="如：公牛集团2024年营业收入是多少？"></div>
       <button id="askBtn">提问</button>
     </div>
-    <div class="hint">支持：精确数值查询 / 指标计算 / 深度归因（附证据引用）</div>
+    <div class="hint">支持：精确数值查询 / 指标计算 / 深度归因（附证据引用）。多轮对话自动续接上次公司。</div>
+  </div>
+
+  <div class="card">
+    <h2>指标概览</h2>
+    <div class="row">
+      <div><label>公司</label><select id="ovCompany"></select></div>
+      <div><label>年度</label><input type="number" id="ovYear" value="2024"></div>
+      <div><button id="ovBtn" style="margin-top:22px">查看</button></div>
+    </div>
+    <div id="overview"></div>
+  </div>
+
+  <div class="card">
+    <h2>技能分析</h2>
+    <div class="row">
+      <div><label>技能</label><select id="skillSel"></select></div>
+      <div><label>公司</label><select id="skillCompany"></select></div>
+      <div><button id="skillBtn" style="margin-top:22px">运行</button></div>
+    </div>
+    <div id="skillResult"></div>
   </div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
 const chat = $('chat');
+let threadId = localStorage.getItem('fa_thread') || null;
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
-
 function addMsg(q, html) {
   const d = document.createElement('div');
   d.className = 'msg';
   d.innerHTML = `<div class="q">${esc(q)}</div><div class="a">${html}</div>`;
-  chat.appendChild(d);
-  chat.scrollIntoView({behavior:'smooth', block:'end'});
+  chat.appendChild(d); chat.scrollIntoView({behavior:'smooth', block:'end'});
 }
-
 function fmtSources(sources) {
   if (!sources || !sources.length) return '';
   const pages = [...new Set(sources.filter(s => s.page != null).map(s => `p${s.page}`))];
   return pages.length ? ` <span class="badge">来源: ${pages.join(', ')}</span>` : '';
 }
-
 function fmtTool(r) {
   let body = '';
   if (r.tool === 'query_financial_fact') {
@@ -137,28 +156,29 @@ function fmtTool(r) {
     if (!body) body = '<span class="hint">数据不足</span>';
   } else if (r.tool === 'retrieve_evidence') {
     body = (r.data || []).map(c =>
-      `<div class="evidence"><b>${esc(c.text.slice(0, 120))}${c.text.length>120?'…':''}</b> ` +
-      `(p${c.page_start ?? '?'})</div>`).join('');
+      `<div class="evidence"><b>${esc(c.text.slice(0, 120))}${c.text.length>120?'…':''}</b> (p${c.page_start ?? '?'})</div>`).join('');
   } else if (r.tool === 'validate_result') {
     body = `<span class="hint">校验 errors=${r.data?.errors ?? 0} warnings=${r.data?.warnings ?? 0}</span>`;
   }
   const st = r.status === 'success' ? '<span class="badge ok">✓</span>' : '<span class="badge warn">'+esc(r.status)+'</span>';
   return `<div class="tool">${st}<span class="tname">${esc(r.tool)}</span>${fmtSources(r.sources)}<br>${body}</div>`;
 }
-
 function render(resp) {
   let html = esc(resp.answer || '(无回答)');
   if (resp.missing_evidence?.length) html += `<br><span class="warnline">⚠ 缺失证据: ${esc(resp.missing_evidence.join('；'))}</span>`;
   if (resp.contradictions?.length) html += `<br><span class="warnline">⚠ 冲突: ${esc(resp.contradictions.join('；'))}</span>`;
-  if (resp.tool_results?.length) {
-    html += `<div class="tools">${resp.tool_results.map(fmtTool).join('')}</div>`;
-  }
+  if (resp.run_id) html += `<a class="dl" href="/api/runs/${resp.run_id}/export" download>导出报告</a>`;
+  if (resp.tool_results?.length) html += `<div class="tools">${resp.tool_results.map(fmtTool).join('')}</div>`;
   return html;
 }
 
 async function refreshCompanies() {
   const r = await fetch('/api/companies').then(x => x.json());
-  $('companyChips').innerHTML = (r.companies || []).map(c => `<span class="chip">${esc(c)}</span>`).join('');
+  const cs = r.companies || [];
+  $('companyChips').innerHTML = cs.map(c => `<span class="chip">${esc(c)}</span>`).join('');
+  const opts = cs.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  $('ovCompany').innerHTML = opts;
+  $('skillCompany').innerHTML = opts;
 }
 
 $('uploadBtn').onclick = async () => {
@@ -175,11 +195,8 @@ $('uploadBtn').onclick = async () => {
     if (!r.ok) throw new Error(j.detail || '上传失败');
     $('upHint').textContent = `✓ 已入库 ${j.facts} 条事实` + (j.chunks ? `、${j.chunks} 个文本片段` : '');
     refreshCompanies();
-  } catch (e) {
-    $('upHint').textContent = '✗ ' + e.message;
-  } finally {
-    $('uploadBtn').disabled = false;
-  }
+  } catch (e) { $('upHint').textContent = '✗ ' + e.message; }
+  finally { $('uploadBtn').disabled = false; }
 };
 
 $('askBtn').onclick = async () => {
@@ -189,18 +206,75 @@ $('askBtn').onclick = async () => {
   addMsg(q, '<span class="hint">思考中…</span>');
   try {
     const r = await fetch('/api/ask', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify({query:q})});
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({query:q, thread_id:threadId})});
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || '问答失败');
+    if (j.thread_id) { threadId = j.thread_id; localStorage.setItem('fa_thread', threadId); }
     chat.lastElementChild.querySelector('.a').innerHTML = render(j);
-  } catch (e) {
-    chat.lastElementChild.querySelector('.a').innerHTML = `<span class="warnline">✗ ${esc(e.message)}</span>`;
-  } finally {
-    $('askBtn').disabled = false;
-  }
+  } catch (e) { chat.lastElementChild.querySelector('.a').innerHTML = `<span class="warnline">✗ ${esc(e.message)}</span>`; }
+  finally { $('askBtn').disabled = false; }
+};
+
+// 指标概览
+$('ovBtn').onclick = async () => {
+  const company = $('ovCompany').value, year = $('ovYear').value;
+  if (!company) return;
+  $('ovBtn').disabled = true;
+  try {
+    const j = await fetch(`/api/company/${encodeURIComponent(company)}/overview?year=${year}`).then(x => x.json());
+    let html = '';
+    if (j.metrics?.length) {
+      const groups = [...new Set(j.metrics.map(m => m.group))];
+      html += groups.map(g => {
+        const cards = j.metrics.filter(m => m.group === g).map(m =>
+          `<div class="mcard ${m.is_signal?'signal':''} ${m.value==null?'na':''}">
+            <div class="mn">${esc(m.name)}</div><div class="mv">${esc(m.display)}</div></div>`).join('');
+        return `<div class="mgroup">${esc(g)}</div><div class="mgrid">${cards}</div>`;
+      }).join('');
+      html += '<div class="mgroup">关键指标趋势</div>';
+      for (const [code, series] of Object.entries(j.trends || {})) {
+        const name = series[0]?.name || code;
+        html += `<div class="trend">${esc(name)}：${series.map(s => `${s.display}`).join(' → ')}</div>`;
+      }
+    } else { html = '<span class="hint">无数据，请先上传财报</span>'; }
+    $('overview').innerHTML = html;
+  } finally { $('ovBtn').disabled = false; }
+};
+
+// 技能分析
+async function loadSkills() {
+  const j = await fetch('/api/skills').then(x => x.json());
+  $('skillSel').innerHTML = j.skills.map(s =>
+    `<option value="${esc(s.code)}">${esc(s.name)}</option>`).join('');
+}
+function fmtRows(rows) {
+  if (!rows?.length) return '<span class="hint">无</span>';
+  const keys = [...new Set(rows.flatMap(r => Object.keys(r)))].slice(0, 5);
+  const head = keys.map(k => `<th>${esc(k)}</th>`).join('');
+  const body = rows.slice(0, 20).map(r =>
+    `<tr>${keys.map(k => `<td>${esc(typeof r[k]==='object'?JSON.stringify(r[k]):r[k])}</td>`).join('')}</tr>`).join('');
+  return `<table><tr>${head}</tr>${body}</table>`;
+}
+$('skillBtn').onclick = async () => {
+  const code = $('skillSel').value, company = $('skillCompany').value;
+  if (!company) return;
+  $('skillBtn').disabled = true;
+  try {
+    const r = await fetch(`/api/skills/${code}/run`, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({company_name:company, fiscal_year:parseInt($('ovYear').value)||null})});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || '技能运行失败');
+    let html = `<div class="skill-summary">${esc(j.summary)}</div>`;
+    if (j.warnings?.length) html += `<div class="warnline">⚠ ${j.warnings.map(esc).join('；')}</div>`;
+    html += (j.sections || []).map(s =>
+      `<div class="mgroup">${esc(s.heading)}</div>${fmtRows(s.rows)}`).join('');
+    $('skillResult').innerHTML = html;
+  } catch (e) { $('skillResult').innerHTML = `<span class="warnline">✗ ${esc(e.message)}</span>`; }
+  finally { $('skillBtn').disabled = false; }
 };
 
 refreshCompanies();
+loadSkills();
 </script>
 </body>
 </html>
