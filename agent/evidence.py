@@ -88,9 +88,15 @@ def _find_missing(
     chunks: list[EvidenceChunk],
     intent: Intent | None,
 ) -> list[str]:
-    """按意图判断缺失的必要证据（方案 5.3 三条路径）。"""
+    """按意图判断缺失的必要证据（方案 5.3 三条路径）。
+
+    注意：facts 非空 ≠ 有可用事实——value=None 的 fact（科目存在但数值缺失/未披露，
+    方案规则 5）不构成证据，须按「有无值事实」判断，否则把「空值」当「有数据」会
+    让 FACT_QUERY / ATTRIBUTION 误判为充分。
+    """
+    has_valued_fact = any(f.has_value() for f in facts)
     missing: list[str] = []
-    if intent is Intent.FACT_QUERY and not facts:
+    if intent is Intent.FACT_QUERY and not has_valued_fact:
         missing.append("缺少财务事实数据")
     if intent is Intent.METRIC_ANALYSIS:
         if not metrics:
@@ -98,7 +104,7 @@ def _find_missing(
         elif metrics and all(not getattr(m, "computed", False) for m in metrics.values()):
             missing.append("全部指标 insufficient_data（缺科目或缺上期）")
     if intent is Intent.ATTRIBUTION:
-        if not facts:
+        if not has_valued_fact:
             missing.append("缺少财务事实数据")
         if not chunks:
             missing.append("缺少文本证据（MD&A/附注）")
