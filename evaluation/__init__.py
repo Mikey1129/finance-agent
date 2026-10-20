@@ -4,4 +4,6 @@
 - 阶段 1 评测 A：字段级（eval_data_extraction）+ 整表级（eval_balance_sheet）。
 - 阶段 2 评测 B：指标计算（eval_metrics）。
 - 阶段 3/4 评测 C：证据归因（eval_attribution）。
+- 阶段 3/4 RAG 检索评测：eval_retrieval（Recall@K/Precision@K/MRR/nDCG@K + Latency，
+  BM25 基线，后续 BGE/Reranker 复用同一评测集对比）。
 """

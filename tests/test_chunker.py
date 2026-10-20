@@ -1,7 +1,7 @@
 """chunker 结构切块测试。"""
 
 from domain import ChunkType
-from retrieval.chunker import chunk_text, is_section_heading
+from retrieval.chunker import chunk_text, chunk_pages, is_section_heading
 
 
 def test_is_section_heading():
@@ -25,3 +25,27 @@ def test_chunk_text_section_parent_relationship():
     assert chunks[1].chunk_type is ChunkType.PARAGRAPH
     assert chunks[1].parent_chunk_id == chunks[0].chunk_id
     assert chunks[1].section_path == "三、财务报表"
+
+
+def test_long_paragraph_split_into_sentences():
+    # 无空行分隔的整段长文本（模拟 PDF extract_text），应被按句子二次分割
+    text = "。" .join(f"这是第{i}个句子" for i in range(30))
+    chunks = chunk_text(text, "测试公司", 2025, "r1", max_chunk_len=80)
+    assert len(chunks) > 1
+    # 每个 chunk 都不应超过 max_chunk_len（除单句硬切兜底外）
+    assert all(len(c.text) <= 80 for c in chunks)
+
+
+def test_chunk_ids_unique_across_pages():
+    # 两页各自无空行长文本，chunk_id 必须跨页唯一（id_seed=页码）
+    pages = [type("P", (), {"page_number": 1, "text": "甲" * 500})(),
+             type("P", (), {"page_number": 2, "text": "乙" * 500})()]
+    chunks = chunk_pages(pages, "测试公司", 2025, "r1", max_chunk_len=100)
+    ids = [c.chunk_id for c in chunks]
+    assert len(ids) == len(set(ids)), "chunk_id 跨页重复"
+
+
+def test_chunk_pages_short_text_keeps_id_seed():
+    pages = [type("P", (), {"page_number": 3, "text": "一句话。", "tables": []})()]
+    chunks = chunk_pages(pages, "测试公司", 2025, "r1")
+    assert chunks and "p3" in chunks[0].chunk_id
