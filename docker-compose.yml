@@ -1,0 +1,13 @@
+services:
+  finance-agent:
+    build: .
+    image: finance-agent:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./storage:/app/storage
+    environment:
+      # 可选：视觉兜底（DashScope）与 LLM（DeepSeek）API key，留空则对应能力关闭
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+    restart: unless-stopped

@@ -15,7 +15,7 @@ FinRAG（财报数值推理 RAG）的升级版 —— 从「RAG 玩具」到「�
 | 2 分析能力 | ✅ 基本完成 | 科目映射 + 指标注册中心（16 指标）+ 多期比较 + 工具注册/Schema |
 | 3 Agent 闭环 | ✅ 完成 | LangGraph 编排 + Intent Router + AgentState + Checkpointer + Function Calling + BM25 召回 + 证据组装 |
 | 4 产品界面 | ✅ 基本完成 | 上传/对话/指标卡片/趋势/技能/导出/多轮续接 + Skill + 长期记忆 + 评测 D |
-| 5 企业增强 | 🔄 进行中 | 权限/审计 ✅ + 多公司比较 ✅ + 缓存/上下文 ✅ + 复杂 PDF 视觉 ✅ + Docker |
+| 5 企业增强 | ✅ 基本完成 | 权限/审计 + 多公司比较 + 缓存/上下文 + 复杂 PDF 视觉 + Docker |
 
 ## 目录结构
 
@@ -95,6 +95,8 @@ finance-agent/
 **缓存与上下文压缩**：`retrieval/cache.py` `RetrievalCache`（TTL + 容量上限，满时淘汰最早到期，命中返回浅拷贝），接入 `Retriever`（可选，默认关闭）；`agent/summary.py` `HistorySummarizer` 把多轮历史压缩为「最近 N 轮原始对话 + 更早历史的实体摘要」（提取公司/期间/科目/指标，不把模型结论当事实）。
 
 **复杂 PDF 视觉解析兜底**：`ingestion/vision_parser.py` 提供 `is_scanned_pdf`（无文本层扫描件检测）+ `VisionParser` 抽象接口 + `QwenVLVisionParser`（DashScope 多模态，测试 mock）+ `parse_pdf_with_fallback`（pdfplumber 优先，扫描件且配置视觉时兜底恢复可检索文本）；`FinanceService` 增加可选 `vision_parser` 参数（默认关闭，行为不变）。
+
+**Docker 容器化**：`Dockerfile`（python:3.11-slim，排除可选重依赖 sentence-transformers/torch 减小镜像）+ `.dockerignore`（排除 storage/模型/缓存）+ `docker-compose.yml`（端口 8000 + storage volume 挂载 + 可选 API key 环境变量）。
 
 ## 快速开始
 

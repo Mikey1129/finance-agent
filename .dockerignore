@@ -1,0 +1,22 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+.pytest_cache
+*.egg-info
+.venv
+venv
+
+# 运行时数据（用 volume 挂载，不进镜像）
+storage/
+*.duckdb
+*.db
+
+# 模型（BGE 等大文件，默认关闭）
+models/
+
+# 文档与测试缓存
+*.pdf
