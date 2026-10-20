@@ -104,9 +104,10 @@ class Retriever:
     方案 5.11「分别召回 → 合并去重 → 重排」——重排（Reranker）待数据证明后接入。
     """
 
-    def __init__(self, chunks: list[EvidenceChunk], embedder=None):
+    def __init__(self, chunks: list[EvidenceChunk], embedder=None, cache=None):
         self.chunks = chunks
         self.embedder = embedder
+        self.cache = cache
         self._doc_tokens = [tokenize(c.text) for c in chunks]
         self._index = BM25Index(self._doc_tokens)
         self._doc_embeddings: np.ndarray | None = None  # 懒构建（首次向量召回时）
@@ -155,6 +156,11 @@ class Retriever:
         top_k: int = 5,
     ) -> list[EvidenceChunk]:
         """元数据过滤 → BM25(+BGE 语义) → RRF 融合 → 去重 → top_k 个片段。"""
+        if self.cache is not None:
+            cached = self.cache.get(query, company_name, fiscal_year, section, top_k)
+            if cached is not None:
+                return cached
+
         indices = self._filtered_indices(company_name, fiscal_year, section)
         if not indices:
             return []
@@ -173,4 +179,6 @@ class Retriever:
             if chunk.chunk_id not in seen:
                 seen.add(chunk.chunk_id)
                 result.append(chunk)
+        if self.cache is not None:
+            self.cache.put(query, company_name, fiscal_year, section, top_k, result)
         return result
