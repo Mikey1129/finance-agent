@@ -9,6 +9,15 @@ from .state import AgentState, AgentStatus, Intent
 from .router import RouterResult, route
 from .evidence import EvidenceAssembler, EvidencePack
 from .context import ContextBuilder, ContextPolicy, ContextResolver, ContextPayload, ResolvedContext
+from .hooks import (
+    BudgetHook,
+    Hook,
+    HookManager,
+    HookResult,
+    ParamRangeHook,
+    PromptInjectionHook,
+    SourceIntegrityHook,
+)
 from .tools import (
     BaseTool,
     ComputeMetricTool,
@@ -37,6 +46,13 @@ __all__ = [
     "ContextResolver",
     "ContextPayload",
     "ResolvedContext",
+    "BudgetHook",
+    "Hook",
+    "HookManager",
+    "HookResult",
+    "ParamRangeHook",
+    "PromptInjectionHook",
+    "SourceIntegrityHook",
     "BaseTool",
     "ComputeMetricTool",
     "ComparePeriodsTool",
