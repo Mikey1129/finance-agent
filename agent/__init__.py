@@ -18,6 +18,8 @@ from .hooks import (
     PromptInjectionHook,
     SourceIntegrityHook,
 )
+from .memory import MemoryItem, MemoryStore, SessionStore
+from .planner import Planner, PlanStep
 from .tools import (
     BaseTool,
     ComputeMetricTool,
@@ -53,6 +55,11 @@ __all__ = [
     "ParamRangeHook",
     "PromptInjectionHook",
     "SourceIntegrityHook",
+    "MemoryItem",
+    "MemoryStore",
+    "SessionStore",
+    "Planner",
+    "PlanStep",
     "BaseTool",
     "ComputeMetricTool",
     "ComparePeriodsTool",
