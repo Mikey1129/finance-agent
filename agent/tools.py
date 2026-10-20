@@ -10,13 +10,12 @@ retrieve_evidence / validate_result。
 - 工具失败返回明确错误类型（ToolError.type），由工作流决定重试/降级/终止；
 - 不允许模型生成的任意 SQL/Python 未经限制执行——所有查询走 Store 的白名单参数化接口。
 
-retrieve_evidence 的后端是关键词基线（阶段 2 无 BM25/BGE），阶段 3 由
-retrieval/retriever.py 的混合召回替换，接口不变（换 self.chunks 为 retriever）。
+retrieve_evidence 的后端是 retrieval/retriever.py 的 BM25 基线（含元数据过滤），
+BGE 语义召回与 Reranker 阶段 3/4 接入。
 """
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any
@@ -27,6 +26,7 @@ from domain import EvidenceChunk, FinancialFact, StatementType
 from finance.metrics import METRIC_DEFINITIONS, MetricResult, compute_metrics, compute_series
 from finance.store import Store
 from finance.validation import ValidationReport, check_balance_sheet, validate_fact
+from retrieval.retriever import Retriever
 
 
 class ToolStatus(str, Enum):
@@ -109,31 +109,6 @@ def _facts_from_store(
     """从 Store 查财务事实并还原为 FinancialFact 对象。"""
     rows = store.query_facts(company_name=company_name, fiscal_year=fiscal_year)
     return [FinancialFact.model_validate(r) for r in rows]
-
-
-def _tokenize(text: str) -> list[str]:
-    """朴素分词：英文按字母数字切分，中文连续片段取 2-gram。
-
-    阶段 3 由 retrieval/retriever.py 的 BM25/BGE 替换，此处仅作关键词基线。
-    """
-    tokens: list[str] = []
-    for m in re.findall(r"[a-zA-Z0-9]+", text):
-        tokens.append(m.lower())
-    for m in re.findall(r"[一-鿿]+", text):
-        if len(m) == 1:
-            tokens.append(m)
-        else:
-            tokens.extend(m[i : i + 2] for i in range(len(m) - 1))
-    return tokens
-
-
-def _keyword_score(text: str, query_tokens: list[str]) -> float:
-    """关键词命中率：命中词元数 / 去重查询词元数（无 IDF 的朴素 TF）。"""
-    if not query_tokens:
-        return 0.0
-    text_tokens = _tokenize(text)
-    hits = sum(1 for t in set(query_tokens) if t in text_tokens)
-    return hits / len(set(query_tokens))
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +247,7 @@ class RetrieveEvidenceTool(BaseTool):
     def __init__(self, store: Store, chunks: list[EvidenceChunk] | None = None):
         super().__init__(store)
         self.chunks = chunks or []
+        self._retriever = Retriever(self.chunks)
 
     def run(self, args: RetrieveEvidenceInput) -> ToolResult:
         if not args.query.strip():
@@ -279,19 +255,13 @@ class RetrieveEvidenceTool(BaseTool):
         if not self.chunks:
             return ToolResult.fail(self.name, "no_evidence_source", "无可检索的文本证据源")
 
-        candidates = self.chunks
-        if args.company_name:
-            candidates = [c for c in candidates if c.company_name == args.company_name]
-        if args.fiscal_year is not None:
-            candidates = [c for c in candidates if c.fiscal_year == args.fiscal_year]
-        if args.section:
-            candidates = [c for c in candidates if c.section_path and args.section in c.section_path]
-
-        query_tokens = _tokenize(args.query)
-        scored = [(c, _keyword_score(c.text, query_tokens)) for c in candidates]
-        scored = [(c, s) for c, s in scored if s > 0]
-        scored.sort(key=lambda x: x[1], reverse=True)
-        top = [c for c, _ in scored[: args.top_k]]
+        top = self._retriever.retrieve(
+            args.query,
+            company_name=args.company_name,
+            fiscal_year=args.fiscal_year,
+            section=args.section,
+            top_k=args.top_k,
+        )
 
         if not top:
             return ToolResult(
