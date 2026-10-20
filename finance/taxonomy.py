@@ -166,6 +166,8 @@ RAW_TO_STANDARD: dict[str, str] = {
     # 现金流量表
     "经营活动产生的现金流量净额": "operating_cash_flow",
     "经营活动现金流量净额": "operating_cash_flow",
+    "经营现金流": "operating_cash_flow",
+    "经营现金流净额": "operating_cash_flow",
     "投资活动产生的现金流量净额": "investing_cash_flow",
     "投资活动现金流量净额": "investing_cash_flow",
     "筹资活动产生的现金流量净额": "financing_cash_flow",
