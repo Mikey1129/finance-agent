@@ -28,6 +28,7 @@ from finance.store import Store
 from finance.taxonomy import STANDARD_ITEMS, map_item
 from finance.validation import ValidationReport, check_balance_sheet, validate_fact
 from retrieval.retriever import Retriever
+from retrieval.reranker import build_reranker
 
 
 class ToolStatus(str, Enum):
@@ -296,10 +297,13 @@ class RetrieveEvidenceTool(BaseTool):
     description = "检索年报、MD&A 与财务附注文本证据，返回带来源（章节/页码）的片段。"
     input_schema = RetrieveEvidenceInput
 
-    def __init__(self, store: Store, chunks: list[EvidenceChunk] | None = None):
+    def __init__(self, store: Store, chunks: list[EvidenceChunk] | None = None, reranker=None):
         super().__init__(store)
         self.chunks = chunks or []
-        self._retriever = Retriever(self.chunks)
+        # 默认自动感知：有 DASHSCOPE_API_KEY 启用 qwen3-rerank（数据证明提升），否则纯 BM25
+        if reranker is None:
+            reranker = build_reranker()
+        self._retriever = Retriever(self.chunks, reranker=reranker)
 
     def run(self, args: RetrieveEvidenceInput) -> ToolResult:
         if not args.query.strip():

@@ -72,6 +72,10 @@ finance-agent/
 
 > 模型下载（可选）：`embedder=None` 时无需装 `sentence-transformers`。启用 BGE 前，先下载模型到 `models/bge-small-zh-v1.5`（HF 镜像或 modelscope），代码优先加载本地路径。
 
+**Reranker 候选重排（DashScope qwen3-rerank，默认开启）**：`retrieval/reranker.py` 提供 `Reranker` 抽象 + `DashScopeReranker`（httpx 直连 `qwen3-rerank`，key 从 `DASHSCOPE_API_KEY` 读，缺 key / 请求失败 / 空结果降级为召回原顺序）+ `build_reranker()`（有 key 即自动启用）。`Retriever` 先召回候选池（`top_k×4`）再交给 reranker 对 `(query, doc)` 精细重排，纠正「语义沾边但非本科目」挤进 top-k 的问题。
+
+**评测结论（公牛 2024 年报，606 chunk，k=5，真实 qwen3-rerank）**：BM25 基线 Recall@5=0.632 / nDCG@5=0.534 / MRR=0.667；**BM25+qwen3-rerank Recall@5=0.740 / nDCG@5=0.663 / MRR=0.703**——3 查询改善（营收 0.25→0.50、归母净利润 0.67→1.00、货币资金 0.50→1.00）、0 劣化，正中 BM25 精确数值查询的弱项。故**默认开启**：`build_reranker()` 检测到 `DASHSCOPE_API_KEY` 即启用，无 key 自动降级纯 BM25（行为与接入前一致）。代价：每查询延迟 8ms→~526ms（一次 API 调用）。`rank_fn` 可注入，单测不触网。
+
 **产品界面**：`app/service.py`（FinanceService 服务层）+ `app/main.py`（FastAPI）+ `app/static/index.html`（深色金融风单页）。完整闭环——上传财报 → 对话提问（答案带来源引用 + 缺失/冲突提示）→ 指标概览卡片与趋势 → 技能分析 → 报告导出（Markdown）→ 多轮对话自动续接上次公司。
 
 **Skill 技能层**：`agent/skills/` 5 个可复用技能（三表综合分析/盈利能力/现金流质量/财务风险信号/年报摘要），每个含适用范围/输入/流程/依赖工具/输出/校验规则/评测样例；复用 Hook 三层校验，静态注册不动态执行代码。
@@ -102,6 +106,6 @@ finance-agent/
 
 ```bash
 pip install -r requirements.txt
-pytest            # 运行测试（168 个用例）
+pytest            # 运行测试（217 个用例）
 uvicorn app.main:app --reload   # 启动界面 http://127.0.0.1:8000
 ```

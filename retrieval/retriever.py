@@ -98,16 +98,18 @@ def _rrf_fuse(ranked_a: list[int], ranked_b: list[int], top_k: int) -> list[int]
 
 
 class Retriever:
-    """混合检索器：元数据过滤 → BM25 词法 + BGE 语义 → RRF 融合 → 去重 → top_k。
+    """混合检索器：元数据过滤 → BM25 词法 + BGE 语义 → RRF 融合 → Reranker 重排 → top_k。
 
     embedder 为 None（或编码失败）时降级为纯 BM25，行为与基线一致。
-    方案 5.11「分别召回 → 合并去重 → 重排」——重排（Reranker）待数据证明后接入。
+    reranker 为 None（或打分失败）时保持召回原顺序，行为与接入前一致。
+    方案 5.11「分别召回 → 合并去重 → 重排」。
     """
 
-    def __init__(self, chunks: list[EvidenceChunk], embedder=None, cache=None):
+    def __init__(self, chunks: list[EvidenceChunk], embedder=None, cache=None, reranker=None):
         self.chunks = chunks
         self.embedder = embedder
         self.cache = cache
+        self.reranker = reranker
         self._doc_tokens = [tokenize(c.text) for c in chunks]
         self._index = BM25Index(self._doc_tokens)
         self._doc_embeddings: np.ndarray | None = None  # 懒构建（首次向量召回时）
@@ -147,6 +149,15 @@ class Retriever:
         vecs = self.embedder.encode([c.text for c in self.chunks])
         self._doc_embeddings = np.asarray(vecs, dtype="float32") if vecs is not None else None
 
+    def _rerank(self, query: str, candidates: list[int]) -> list[int] | None:
+        """对候选 chunk 用 reranker 重排；失败返回 None（调用方保持原顺序）。"""
+        docs = [self.chunks[i].text for i in candidates]
+        scores = self.reranker.rank(query, docs)
+        if not scores or len(scores) != len(candidates):
+            return None
+        order = sorted(range(len(candidates)), key=lambda i: -scores[i])
+        return [candidates[i] for i in order]
+
     def retrieve(
         self,
         query: str,
@@ -165,11 +176,20 @@ class Retriever:
         if not indices:
             return []
 
-        top_n = max(top_k * 4, 20)  # 融合候选池，保证 top_k 有足够来源
+        top_n = max(top_k * 4, 20)  # 候选池，保证 top_k 有足够来源（reranker 重排的输入）
         bm25_ranked = self._bm25_ranked(tokenize(query), indices, top_n)
         vec_ranked = self._vec_ranked(query, indices, top_n)
 
-        ranked = _rrf_fuse(bm25_ranked, vec_ranked, top_k) if vec_ranked else bm25_ranked[:top_k]
+        # 候选池：有 BGE 时 RRF 融合，否则纯 BM25。保留 top_n（而非 top_k）供 reranker 重排。
+        candidates = _rrf_fuse(bm25_ranked, vec_ranked, top_n) if vec_ranked else bm25_ranked
+
+        # reranker 对候选池精细重排；打分失败降级为召回原顺序（行为与接入前一致）
+        if self.reranker is not None and len(candidates) > 1:
+            reranked = self._rerank(query, candidates)
+            if reranked is not None:
+                candidates = reranked
+
+        ranked = candidates[:top_k]
 
         # 按 chunk_id 去重（保持排序，防御性处理重复 chunk）
         result: list[EvidenceChunk] = []
