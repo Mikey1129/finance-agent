@@ -13,7 +13,7 @@ FinRAG（财报数值推理 RAG）的升级版 —— 从「RAG 玩具」到「�
 |---|---|---|
 | 1 数据基础 | ✅ 基本完成 | ReportDoc/FinancialFact/Provenance + Excel/CSV + 原生 PDF + 结构切块 + DuckDB + 基础校验 |
 | 2 分析能力 | ✅ 基本完成 | 科目映射 + 指标注册中心（16 指标）+ 多期比较 + 工具注册/Schema |
-| 3 Agent 闭环 | 未开始 | LangGraph + Intent Router + AgentState + Function Calling + 混合召回 |
+| 3 Agent 闭环 | 🔄 大部分完成 | LangGraph 编排 + Intent Router + AgentState + BM25 混合召回 + 证据组装（Checkpointer/LLM 决策层待阶段 4） |
 | 4 产品界面 | 未开始 | 上传/指标卡片/对话/引用/导出 + Skill + 长期记忆 |
 | 5 企业增强 | 未开始 | 复杂 PDF 视觉 + 多公司比较 + 审计/权限 + Docker |
 
@@ -51,9 +51,21 @@ finance-agent/
 
 **评测 B（指标计算）**：`evaluation/eval_metrics.py` 用真实财报（公牛集团 2024 年报）端到端计算全部指标，断言关键盈利/偿债指标落在合理区间，防止科目映射污染导致指标静默跑偏；公式与边界（分母为 0 / 缺科目 / 无上期 / scope 过滤）由 `tests/test_metrics.py` + `tests/test_tools.py` 覆盖。
 
+## 阶段 3 成果（Agent 闭环 · 确定性骨架）
+
+- **AgentState + Intent Router**：`agent/state.py` 统一任务状态（会话标识/业务上下文/任务状态/执行产物/控制字段）；`agent/router.py` 规则版分流 A/B/C/CLARIFY + 实体提取（公司/期间/科目/指标，含口语简称）。
+- **BM25 混合召回**：`retrieval/retriever.py` 纯 Python Okapi BM25 + 元数据过滤（公司/年度/章节）+ 去重；`retrieve_evidence` 工具已接入。
+- **上下文管理**：`agent/context.py` ContextResolver 多轮消歧（新指令覆盖、近 N 年）+ ContextBuilder 按优先级组装裁剪到可配置 Token 预算。
+- **证据组装**：`agent/evidence.py` EvidenceAssembler + EvidencePack（来源引用/冲突披露/充分性检查）。
+- **可信性 Hook**：`agent/hooks.py` 三层校验（入口参数范围/预算/来源完整性/提示注入）。
+- **记忆与规划**：`agent/memory.py` 长期记忆（读写/失效/删除）+ 会话历史；`agent/planner.py` 三条路径任务规划。
+- **LangGraph 编排**：`agent/graph.py` 状态图 resolve→plan→execute→validate→answer，CLARIFY 短路；确定性骨架（不接 LLM）。
+
+**待阶段 4**：Checkpointer（状态持久化/恢复）、Function Calling（LLM 决策层接入）、AnalysisRun 落库、BGE/Reranker。
+
 ## 快速开始
 
 ```bash
 pip install -r requirements.txt
-pytest            # 运行测试（59 个用例）
+pytest            # 运行测试（109 个用例）
 ```

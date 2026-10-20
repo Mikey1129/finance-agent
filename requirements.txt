@@ -7,10 +7,12 @@ duckdb>=0.9
 pdfplumber>=0.11
 pytest>=8.0
 
-# === 阶段2+：分析能力 / Agent 编排（后续阶段按需启用）===
+# === 阶段3：Agent 编排 ===
+langgraph>=1.0
+
+# === 阶段4+：产品界面 / LLM 决策层（后续阶段按需启用）===
 # fastapi
 # uvicorn
-# langgraph
 # langchain-openai
 # jieba
 # rank-bm25
