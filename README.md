@@ -15,7 +15,7 @@ FinRAG（财报数值推理 RAG）的升级版 —— 从「RAG 玩具」到「�
 | 2 分析能力 | ✅ 基本完成 | 科目映射 + 指标注册中心（16 指标）+ 多期比较 + 工具注册/Schema |
 | 3 Agent 闭环 | ✅ 完成 | LangGraph 编排 + Intent Router + AgentState + Checkpointer + Function Calling + BM25 召回 + 证据组装 |
 | 4 产品界面 | ✅ 基本完成 | 上传/对话/指标卡片/趋势/技能/导出/多轮续接 + Skill + 长期记忆 + 评测 D |
-| 5 企业增强 | 🔄 进行中 | 权限/审计 ✅ + 多公司比较 + 复杂 PDF 视觉 + Docker |
+| 5 企业增强 | 🔄 进行中 | 权限/审计 ✅ + 多公司比较 ✅ + 复杂 PDF 视觉 + Docker |
 
 ## 目录结构
 
@@ -80,7 +80,7 @@ finance-agent/
 
 **评测 D（系统安全）**：`evaluation/eval_security.py` 六类场景（恶意文档/提示词注入/参数越界/预算循环终止/错误路由/记忆污染）端到端验证安全机制；顺带修复 graph/skills 的 Hook 列表漏接 `PromptInjectionHook` 的缺口。
 
-## 阶段 5 成果（企业增强 · 权限与审计）
+## 阶段 5 成果（企业增强）
 
 **权限控制**：`auth/models.py` 引入 `User` / `Role`（ADMIN / ANALYST / VIEWER）+ `AccessPolicy` 公司访问范围隔离（`company_scope`：None=全部、列表=指定公司、`[]`=无）。读/写分离：VIEWER 只读、ANALYST 读写范围内公司、ADMIN 全权限。**权限是可选增强**——不传 `user` 时行为与接入前完全一致（向后兼容既有骨架与测试）。
 
@@ -89,6 +89,8 @@ finance-agent/
 **工具层权限校验**：`agent/hooks.py` 新增 `PermissionHook`（入口层），`Hook.before/after` 统一透传 `user`；`agent/graph.py` 注入 `access_policy` / `audit_log`，`execute` 时把当前用户传入 Hook。越权工具调用被阻止（`hook_blocked`）并记审计。
 
 **运行记录追溯用户**：`AnalysisRun` 增加 `user_id`，`finance/store.py` `analysis_runs` 表同步加列，每条分析可回溯到具体用户。
+
+**多公司横向比较**：`agent/tools.py` 新增 `compare_companies` 工具（第 6 个核心工具），对多公司同一年度计算同一组指标；`PermissionHook` 已支持 `company_names` 列表的逐公司读权限校验（越权即阻止）；`app/service.py` 暴露 `compare_companies`（含权限拒绝 + 审计），`FastAPI` 新增 `/api/compare` 接口。
 
 ## 快速开始
 

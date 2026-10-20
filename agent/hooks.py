@@ -135,6 +135,7 @@ class SourceIntegrityHook(Hook):
         "query_financial_fact",
         "compute_metric",
         "compare_periods",
+        "compare_companies",
         "retrieve_evidence",
     }
 

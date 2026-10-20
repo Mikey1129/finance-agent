@@ -11,6 +11,7 @@ FastAPI 层（main.py）与测试共用，避免业务逻辑散在接口里。
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -37,11 +38,13 @@ _OVERVIEW_TREND_CODES = ["gross_margin", "net_margin", "roe", "revenue_growth", 
 
 
 def _serialize(obj: Any) -> Any:
-    """把工具返回的嵌套数据转成 JSON 友好的 dict（Pydantic 模型递归 dump）。"""
+    """把工具返回的嵌套数据转成 JSON 友好的 dict（Pydantic/dataclass 递归 dump）。"""
     if isinstance(obj, BaseModel):
         return obj.model_dump()
     if isinstance(obj, Enum):
         return obj.value
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return {k: _serialize(v) for k, v in asdict(obj).items()}
     if isinstance(obj, list):
         return [_serialize(x) for x in obj]
     if isinstance(obj, dict):
@@ -287,6 +290,48 @@ class FinanceService:
             "company": company_name, "year": fiscal_year,
             "metrics": metric_cards, "trends": trends, "facts": fact_cards,
         }
+
+    def compare_companies(
+        self,
+        company_names: list[str],
+        fiscal_year: int,
+        metric_codes: list[str] | None = None,
+        scope: str = "consolidated",
+        user: User | None = None,
+    ) -> dict:
+        """跨公司横向比较（阶段 5）：对多公司同一年度计算同一组指标。
+
+        权限：user 传入时先校验对每家公司有读权限；越权返回 forbidden 并记审计。
+        """
+        names = list(dict.fromkeys(company_names))
+        if len(names) < 2:
+            return {"error": "invalid_param", "detail": "至少需要 2 家公司对比"}
+
+        if user is not None:
+            denied = [c for c in names if not self.access_policy.can_read(user, c)]
+            if denied:
+                self.audit_log.record(
+                    "access_denied", user_id=user.user_id, resource_type="company",
+                    resource_id=",".join(denied), result="denied", detail=f"无权对比公司 {denied}",
+                )
+                return {"error": "forbidden", "denied": denied}
+
+        period = str(fiscal_year)
+        comparison: dict[str, Any] = {}
+        for company in names:
+            rows = self.store.query_facts(company_name=company, fiscal_year=fiscal_year)
+            facts = [FinancialFact.model_validate(r) for r in rows]
+            if not facts:
+                comparison[company] = None
+                continue
+            metrics = compute_metrics(facts, period, scope, metric_codes or None)
+            comparison[company] = {code: _serialize(m) for code, m in metrics.items()}
+
+        self.audit_log.record(
+            "compare", user_id=user.user_id if user else None, resource_type="company",
+            resource_id=",".join(names), result="success",
+        )
+        return {"year": fiscal_year, "scope": scope, "comparison": comparison}
 
     def export_run(self, run_id: str) -> str | None:
         """把一次运行记录导出为 Markdown 报告（可回放审计的产物）。"""

@@ -41,6 +41,13 @@ class SkillRunRequest(BaseModel):
     fiscal_year: int | None = None
 
 
+class CompareRequest(BaseModel):
+    company_names: list[str]
+    fiscal_year: int
+    metric_codes: list[str] | None = None
+    scope: str = "consolidated"
+
+
 def create_app(service: FinanceService | None = None) -> FastAPI:
     """构建 FastAPI 应用。service 可注入（测试用 :memory:），缺省为持久化单例。"""
     svc = service or FinanceService()
@@ -124,6 +131,21 @@ def create_app(service: FinanceService | None = None) -> FastAPI:
     @application.get("/api/company/{company_name}/overview")
     def overview(company_name: str, year: int) -> dict:
         return svc.overview(company_name, year)
+
+    @application.post("/api/compare")
+    def compare(req: CompareRequest) -> dict:
+        """跨公司横向比较（阶段 5：多公司同一年度同一组指标）。"""
+        if not req.company_names:
+            raise HTTPException(status_code=400, detail="company_names 不能为空")
+        result = svc.compare_companies(
+            req.company_names, req.fiscal_year,
+            metric_codes=req.metric_codes, scope=req.scope,
+        )
+        if result.get("error") == "forbidden":
+            raise HTTPException(status_code=403, detail=f"无权对比公司: {result.get('denied')}")
+        if result.get("error"):
+            raise HTTPException(status_code=400, detail=result.get("detail"))
+        return result
 
     @application.get("/api/runs/{run_id}/export")
     def export_run(run_id: str) -> Response:

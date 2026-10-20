@@ -234,6 +234,53 @@ class ComparePeriodsTool(BaseTool):
 
 
 # ---------------------------------------------------------------------------
+# 3.5 compare_companies —— 跨公司横向比较（阶段 5）
+# ---------------------------------------------------------------------------
+class CompareCompaniesInput(BaseModel):
+    company_names: list[str] = Field(description="要对比的公司名列表（至少 2 个，去重）")
+    fiscal_year: int = Field(description="财务年度，如 2025")
+    metric_codes: list[str] = Field(default_factory=list, description="指标 code，空=全部 16 个")
+    scope: str = "consolidated"
+
+
+class CompareCompaniesTool(BaseTool):
+    name = "compare_companies"
+    description = "跨公司横向比较同一组财务指标，输出各公司指标值对比（阶段 5 多公司比较）。"
+    input_schema = CompareCompaniesInput
+
+    def run(self, args: CompareCompaniesInput) -> ToolResult:
+        names = list(dict.fromkeys(args.company_names))  # 去重保序
+        if len(names) < 2:
+            return ToolResult.fail(self.name, "invalid_param", "至少需要 2 家公司对比")
+        unknown = [c for c in args.metric_codes if c not in METRIC_DEFINITIONS]
+        if unknown:
+            return ToolResult.fail(self.name, "unknown_metric", f"未注册的指标: {unknown}")
+
+        period = str(args.fiscal_year)
+        comparison: dict[str, Any] = {}
+        no_data: list[str] = []
+        for company in names:
+            facts = _facts_from_store(self.store, company, args.fiscal_year)
+            if not facts:
+                no_data.append(company)
+                comparison[company] = None
+                continue
+            comparison[company] = compute_metrics(facts, period, args.scope, args.metric_codes or None)
+
+        warnings: list[str] = []
+        if no_data:
+            warnings.append(f"无数据的公司: {', '.join(no_data)}")
+        return ToolResult.ok(
+            self.name,
+            data=comparison,
+            period=period,
+            scope=args.scope,
+            warnings=warnings,
+            sources=[SourceRef(kind="company", ref_id=c) for c in names],
+        )
+
+
+# ---------------------------------------------------------------------------
 # 4. retrieve_evidence —— 检索年报 / MD&A / 财务附注
 # ---------------------------------------------------------------------------
 class RetrieveEvidenceInput(BaseModel):
@@ -373,11 +420,12 @@ class ToolRegistry:
 
 
 def build_tools(store: Store, chunks: list[EvidenceChunk] | None = None) -> ToolRegistry:
-    """构造注册了 5 个核心工具的 ToolRegistry。"""
+    """构造注册了 6 个核心工具的 ToolRegistry（含阶段 5 compare_companies）。"""
     registry = ToolRegistry()
     registry.register(QueryFinancialFactTool(store))
     registry.register(ComputeMetricTool(store))
     registry.register(ComparePeriodsTool(store))
+    registry.register(CompareCompaniesTool(store))
     registry.register(RetrieveEvidenceTool(store, chunks))
     registry.register(ValidateResultTool(store))
     return registry

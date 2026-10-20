@@ -232,11 +232,12 @@ def test_registry_schemas_and_invoke():
         "query_financial_fact",
         "compute_metric",
         "compare_periods",
+        "compare_companies",
         "retrieve_evidence",
         "validate_result",
     }
     schemas = registry.schemas()
-    assert len(schemas) == 5
+    assert len(schemas) == 6
     assert all("parameters" in s for s in schemas)
 
     r = registry.invoke("compute_metric", company_name="测试公司", fiscal_year=2024, metric_codes=["roe"])
