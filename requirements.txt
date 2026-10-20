@@ -13,9 +13,8 @@ langgraph>=1.0
 # === 阶段4：BGE 语义检索（可选——embedder=None 时纯 BM25 无需装；依赖 torch，模型从 HF/镜像下载）===
 sentence-transformers>=3.0
 
-# === 阶段4+：产品界面 / LLM 决策层（后续阶段按需启用）===
-# fastapi
-# uvicorn
-# langchain-openai
-# jieba
-# rank-bm25
+# === 阶段4：产品界面（FastAPI）+ LLM 决策层（DeepSeek httpx 直连）===
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+httpx>=0.27

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>企业财报智能分析 Agent</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #2ea8ff;
+    --ok: #3fb950; --warn: #d29922; --err: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; color: var(--accent); }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 4px; }
+  input[type=text], input[type=number], select, textarea {
+    width: 100%; background: #0d1117; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+    font-size: 14px; font-family: inherit;
+  }
+  input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  button {
+    background: var(--accent); color: #04121f; border: 0; border-radius: 6px;
+    padding: 8px 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip {
+    background: #1f2937; border: 1px solid var(--border); border-radius: 20px;
+    padding: 3px 12px; font-size: 12px; color: var(--muted);
+  }
+  .msg { margin-bottom: 14px; }
+  .msg .q { font-weight: 600; margin-bottom: 4px; }
+  .msg .a { white-space: pre-wrap; background: #0d1117; border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; }
+  .badge {
+    display: inline-block; font-size: 11px; border-radius: 4px; padding: 1px 7px;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .badge.ok { background: rgba(63,185,80,.15); color: var(--ok); }
+  .badge.warn { background: rgba(210,153,34,.15); color: var(--warn); }
+  .badge.err { background: rgba(248,81,73,.15); color: var(--err); }
+  .tools { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; }
+  .tool { font-size: 13px; margin-bottom: 8px; }
+  .tool .tname { color: var(--accent); font-weight: 600; }
+  .fact, .metric { display: inline-block; background: #1f2937; border-radius: 6px;
+    padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
+  .evidence { color: var(--muted); font-size: 12px; border-left: 2px solid var(--border);
+    padding-left: 8px; margin: 4px 0; }
+  .evidence b { color: var(--text); }
+  .warnline { color: var(--warn); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>企业财报智能分析 Agent</h1>
+  <div class="sub">数据可信 · 计算可靠 · 分析有据 · 过程可追溯</div>
+
+  <div class="card">
+    <h2>上传财报</h2>
+    <div class="row">
+      <div><label>公司名称</label><input type="text" id="company" placeholder="如：公牛集团"></div>
+      <div><label>财务年度</label><input type="number" id="year" value="2024"></div>
+    </div>
+    <label>报表类型（PDF 自动识别，CSV/Excel 需选择）</label>
+    <select id="stype">
+      <option value="">PDF 自动识别</option>
+      <option value="balance_sheet">资产负债表</option>
+      <option value="income_statement">利润表</option>
+      <option value="cash_flow">现金流量表</option>
+    </select>
+    <label>文件（PDF / CSV / Excel）</label>
+    <input type="file" id="file" accept=".pdf,.csv,.xlsx,.xls">
+    <div class="hint" id="upHint"></div>
+    <button id="uploadBtn">上传并解析</button>
+    <div class="chips" id="companyChips"></div>
+  </div>
+
+  <div class="card">
+    <h2>对话分析</h2>
+    <div id="chat"></div>
+    <div class="row">
+      <div style="flex:1"><input type="text" id="query" placeholder="如：公牛集团2024年营业收入是多少？"></div>
+      <button id="askBtn">提问</button>
+    </div>
+    <div class="hint">支持：精确数值查询 / 指标计算 / 深度归因（附证据引用）</div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const chat = $('chat');
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function addMsg(q, html) {
+  const d = document.createElement('div');
+  d.className = 'msg';
+  d.innerHTML = `<div class="q">${esc(q)}</div><div class="a">${html}</div>`;
+  chat.appendChild(d);
+  chat.scrollIntoView({behavior:'smooth', block:'end'});
+}
+
+function fmtSources(sources) {
+  if (!sources || !sources.length) return '';
+  const pages = [...new Set(sources.filter(s => s.page != null).map(s => `p${s.page}`))];
+  return pages.length ? ` <span class="badge">来源: ${pages.join(', ')}</span>` : '';
+}
+
+function fmtTool(r) {
+  let body = '';
+  if (r.tool === 'query_financial_fact') {
+    body = (r.data || []).filter(f => f.value != null)
+      .map(f => `<span class="fact">${esc(f.standard_item)} = ${f.value} 元</span>`).join('');
+    if (!body) body = '<span class="hint">无匹配事实</span>';
+  } else if (r.tool === 'compute_metric') {
+    body = Object.values(r.data || {}).filter(m => m.computed)
+      .map(m => `<span class="metric">${esc(m.name)} = ${m.value}</span>`).join('');
+    if (!body) body = '<span class="hint">数据不足</span>';
+  } else if (r.tool === 'retrieve_evidence') {
+    body = (r.data || []).map(c =>
+      `<div class="evidence"><b>${esc(c.text.slice(0, 120))}${c.text.length>120?'…':''}</b> ` +
+      `(p${c.page_start ?? '?'})</div>`).join('');
+  } else if (r.tool === 'validate_result') {
+    body = `<span class="hint">校验 errors=${r.data?.errors ?? 0} warnings=${r.data?.warnings ?? 0}</span>`;
+  }
+  const st = r.status === 'success' ? '<span class="badge ok">✓</span>' : '<span class="badge warn">'+esc(r.status)+'</span>';
+  return `<div class="tool">${st}<span class="tname">${esc(r.tool)}</span>${fmtSources(r.sources)}<br>${body}</div>`;
+}
+
+function render(resp) {
+  let html = esc(resp.answer || '(无回答)');
+  if (resp.missing_evidence?.length) html += `<br><span class="warnline">⚠ 缺失证据: ${esc(resp.missing_evidence.join('；'))}</span>`;
+  if (resp.contradictions?.length) html += `<br><span class="warnline">⚠ 冲突: ${esc(resp.contradictions.join('；'))}</span>`;
+  if (resp.tool_results?.length) {
+    html += `<div class="tools">${resp.tool_results.map(fmtTool).join('')}</div>`;
+  }
+  return html;
+}
+
+async function refreshCompanies() {
+  const r = await fetch('/api/companies').then(x => x.json());
+  $('companyChips').innerHTML = (r.companies || []).map(c => `<span class="chip">${esc(c)}</span>`).join('');
+}
+
+$('uploadBtn').onclick = async () => {
+  const file = $('file').files[0], company = $('company').value.trim(), year = $('year').value;
+  if (!file || !company) { $('upHint').textContent = '请填写公司名称并选择文件'; return; }
+  const fd = new FormData();
+  fd.append('file', file); fd.append('company_name', company); fd.append('fiscal_year', year);
+  const st = $('stype').value; if (st) fd.append('statement_type', st);
+  $('uploadBtn').disabled = true;
+  $('upHint').textContent = '解析中（PDF 需较长时间）…';
+  try {
+    const r = await fetch('/api/upload', {method:'POST', body:fd});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || '上传失败');
+    $('upHint').textContent = `✓ 已入库 ${j.facts} 条事实` + (j.chunks ? `、${j.chunks} 个文本片段` : '');
+    refreshCompanies();
+  } catch (e) {
+    $('upHint').textContent = '✗ ' + e.message;
+  } finally {
+    $('uploadBtn').disabled = false;
+  }
+};
+
+$('askBtn').onclick = async () => {
+  const q = $('query').value.trim();
+  if (!q) return;
+  $('askBtn').disabled = true;
+  addMsg(q, '<span class="hint">思考中…</span>');
+  try {
+    const r = await fetch('/api/ask', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({query:q})});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || '问答失败');
+    chat.lastElementChild.querySelector('.a').innerHTML = render(j);
+  } catch (e) {
+    chat.lastElementChild.querySelector('.a').innerHTML = `<span class="warnline">✗ ${esc(e.message)}</span>`;
+  } finally {
+    $('askBtn').disabled = false;
+  }
+};
+
+refreshCompanies();
+</script>
+</body>
+</html>
