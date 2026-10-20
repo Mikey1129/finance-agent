@@ -69,6 +69,16 @@ def test_query_by_item_and_scope():
     assert r.sources[0].ref_id == "revenue-2024"
 
 
+def test_query_chinese_item_name_maps_to_standard():
+    store = _store_with_facts()
+    tool = QueryFinancialFactTool(store)
+    r = tool(company_name="测试公司", standard_item="营业收入", fiscal_year=2024)
+    assert r.status is ToolStatus.SUCCESS
+    assert len(r.data) == 1
+    assert r.data[0].standard_item == "revenue"
+    assert r.data[0].value == 2000.0
+
+
 def test_query_no_match_returns_no_result():
     store = _store_with_facts()
     tool = QueryFinancialFactTool(store)

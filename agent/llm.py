@@ -18,7 +18,8 @@ from typing import Any, Callable
 
 _SYSTEM = (
     "你是企业财报分析 Agent 的任务规划器。根据用户问题和可用工具，决定调用哪些工具"
-    "及其参数。只做规划，财务数字必须由工具从数据层/计算层取得，不得自行编造。"
+    "及其参数。必须调用工具完成规划，不要用文字直接回答财务问题；财务数字必须由工具"
+    "从数据层/计算层取得，不得自行编造。"
 )
 
 
@@ -46,7 +47,7 @@ def _to_openai_tools(schemas: list[dict]) -> list[dict]:
 
 
 def parse_tool_calls(raw_calls: list[Any]) -> list[PlannedCall]:
-    """解析 LLM 返回的 tool_calls（langchain dict 列表），容错 JSON args。"""
+    """解析 LLM 返回的 tool_calls（dict 列表，args 可能为 JSON 字符串），容错解析。"""
     planned: list[PlannedCall] = []
     for tc in raw_calls or []:
         name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
@@ -80,18 +81,33 @@ class LLMPlanner:
         self._invoke = invoke or self._default_invoke
 
     def _default_invoke(self, system: str, user: str, tools: list[dict]) -> list[Any]:
-        from langchain_core.messages import HumanMessage, SystemMessage
-        from langchain_openai import ChatOpenAI
+        # 直接用 httpx 调 DeepSeek 的 OpenAI 兼容端点，绕开 openai SDK / langchain 与
+        # 本机 httpx 版本的兼容性 bug（openai 3.5.0 报 "process() takes no keyword
+        # arguments"）。返回 [{"name":..., "args": JSON字符串}]，交给 parse_tool_calls。
+        import httpx
 
         if not self.api_key:
             raise RuntimeError("未设置环境变量 DEEPSEEK_API_KEY，无法初始化 LLM 决策层")
-        chat = ChatOpenAI(
-            base_url=self.base_url, model=self.model, api_key=self.api_key, temperature=0.0
+        resp = httpx.post(
+            f"{self.base_url}/chat/completions",
+            json={
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "tools": tools,
+                "temperature": 0.0,
+            },
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout=60.0,
         )
-        resp = chat.bind_tools(tools).invoke(
-            [SystemMessage(content=system), HumanMessage(content=user)]
-        )
-        return getattr(resp, "tool_calls", None) or []
+        resp.raise_for_status()
+        msg = resp.json()["choices"][0]["message"]
+        return [
+            {"name": tc["function"]["name"], "args": tc["function"]["arguments"]}
+            for tc in (msg.get("tool_calls") or [])
+        ]
 
     def plan(
         self,

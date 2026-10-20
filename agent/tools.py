@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from domain import EvidenceChunk, FinancialFact, StatementType
 from finance.metrics import METRIC_DEFINITIONS, MetricResult, compute_metrics, compute_series
 from finance.store import Store
+from finance.taxonomy import STANDARD_ITEMS, map_item
 from finance.validation import ValidationReport, check_balance_sheet, validate_fact
 from retrieval.retriever import Retriever
 
@@ -130,10 +131,14 @@ class QueryFinancialFactTool(BaseTool):
     def run(self, args: QueryFinancialFactInput) -> ToolResult:
         if not args.company_name.strip():
             return ToolResult.fail(self.name, "invalid_param", "company_name 不能为空")
+        # LLM 可能传中文科目名（如「营业收入」），用 taxonomy 映射到标准标识符兜底
+        std_item = args.standard_item
+        if std_item and std_item not in STANDARD_ITEMS:
+            std_item = map_item(std_item)
         rows = self.store.query_facts(
             company_name=args.company_name,
             fiscal_year=args.fiscal_year,
-            standard_item=args.standard_item,
+            standard_item=std_item,
             statement_type=args.statement_type.value if args.statement_type else None,
         )
         facts = [FinancialFact.model_validate(r) for r in rows]
