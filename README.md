@@ -15,7 +15,7 @@ FinRAG（财报数值推理 RAG）的升级版 —— 从「RAG 玩具」到「�
 | 2 分析能力 | ✅ 基本完成 | 科目映射 + 指标注册中心（16 指标）+ 多期比较 + 工具注册/Schema |
 | 3 Agent 闭环 | ✅ 完成 | LangGraph 编排 + Intent Router + AgentState + Checkpointer + Function Calling + BM25 召回 + 证据组装 |
 | 4 产品界面 | ✅ 基本完成 | 上传/对话/指标卡片/趋势/技能/导出/多轮续接 + Skill + 长期记忆 + 评测 D |
-| 5 企业增强 | 🔄 进行中 | 权限/审计 ✅ + 多公司比较 ✅ + 缓存/上下文 ✅ + 复杂 PDF 视觉 + Docker |
+| 5 企业增强 | 🔄 进行中 | 权限/审计 ✅ + 多公司比较 ✅ + 缓存/上下文 ✅ + 复杂 PDF 视觉 ✅ + Docker |
 
 ## 目录结构
 
@@ -93,6 +93,8 @@ finance-agent/
 **多公司横向比较**：`agent/tools.py` 新增 `compare_companies` 工具（第 6 个核心工具），对多公司同一年度计算同一组指标；`PermissionHook` 已支持 `company_names` 列表的逐公司读权限校验（越权即阻止）；`app/service.py` 暴露 `compare_companies`（含权限拒绝 + 审计），`FastAPI` 新增 `/api/compare` 接口。
 
 **缓存与上下文压缩**：`retrieval/cache.py` `RetrievalCache`（TTL + 容量上限，满时淘汰最早到期，命中返回浅拷贝），接入 `Retriever`（可选，默认关闭）；`agent/summary.py` `HistorySummarizer` 把多轮历史压缩为「最近 N 轮原始对话 + 更早历史的实体摘要」（提取公司/期间/科目/指标，不把模型结论当事实）。
+
+**复杂 PDF 视觉解析兜底**：`ingestion/vision_parser.py` 提供 `is_scanned_pdf`（无文本层扫描件检测）+ `VisionParser` 抽象接口 + `QwenVLVisionParser`（DashScope 多模态，测试 mock）+ `parse_pdf_with_fallback`（pdfplumber 优先，扫描件且配置视觉时兜底恢复可检索文本）；`FinanceService` 增加可选 `vision_parser` 参数（默认关闭，行为不变）。
 
 ## 快速开始
 

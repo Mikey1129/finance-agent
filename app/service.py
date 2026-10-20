@@ -27,7 +27,7 @@ from domain import FinancialFact, StatementType
 from finance.metrics import METRIC_DEFINITIONS, compute_metrics, compute_series
 from finance.store import Store
 from ingestion.excel_parser import parse_csv, parse_excel
-from ingestion.pdf_parser import parse_pdf
+from ingestion.vision_parser import parse_pdf_with_fallback
 from retrieval.chunker import chunk_pages
 
 # PDF 三大报表都要入库（parse_pdf 每次只提取一个目标报表，故循环三次）
@@ -78,12 +78,14 @@ class FinanceService:
         checkpoint_path: str = "storage/checkpoints.db",
         memory_path: str = "storage/memory.db",
         audit_path: str = "storage/audit.db",
+        vision_parser=None,
     ):
         self.store = Store(db_path)
         self.checkpointer = Checkpointer(checkpoint_path)
         self.memory = SqliteMemoryStore(memory_path)
         self.audit_log = AuditLog(audit_path)
         self.access_policy = AccessPolicy()
+        self.vision_parser = vision_parser  # 扫描件视觉兜底（可选，默认 None）
         self._chunks: list = []
         self._graph: AgentGraph | None = None  # 懒构建，ingest 后失效
 
@@ -147,7 +149,9 @@ class FinanceService:
         chunks: list = []
         total_facts = 0
         for st in _STATEMENTS:
-            parsed = parse_pdf(path, company_name, fiscal_year, st)
+            parsed = parse_pdf_with_fallback(
+                path, company_name, fiscal_year, st, vision_parser=self.vision_parser
+            )
             self._save_result(parsed)
             total_facts += len(parsed.facts)
             if not chunks:  # pages 三次相同，只切一次
