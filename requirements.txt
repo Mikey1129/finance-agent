@@ -1,0 +1,16 @@
+# === 阶段1：数据基础 ===
+pandas>=2.0
+numpy>=1.24
+openpyxl>=3.1
+pydantic>=2.5
+duckdb>=0.9
+pdfplumber>=0.11
+pytest>=8.0
+
+# === 阶段2+：分析能力 / Agent 编排（后续阶段按需启用）===
+# fastapi
+# uvicorn
+# langgraph
+# langchain-openai
+# jieba
+# rank-bm25

@@ -1,0 +1,18 @@
+[project]
+name = "finance-agent"
+version = "0.1.0"
+description = "企业财报智能分析 Agent —— FinRAG 升级版（可追溯、可复核的财务分析）"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "openpyxl>=3.1",
+    "pydantic>=2.5",
+    "duckdb>=0.9",
+    "pdfplumber>=0.11",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

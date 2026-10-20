@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# 环境与密钥
+.env
+.venv/
+venv/
+
+# 本地数据与产物
+storage/
+*.db
+*.duckdb
+
+# 构建
+dist/
+build/
+
+# 系统
+.DS_Store
+Thumbs.db
