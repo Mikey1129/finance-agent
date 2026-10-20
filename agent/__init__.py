@@ -8,6 +8,7 @@
 from .state import AgentState, AgentStatus, Intent
 from .router import RouterResult, route
 from .evidence import EvidenceAssembler, EvidencePack
+from .context import ContextBuilder, ContextPolicy, ContextResolver, ContextPayload, ResolvedContext
 from .tools import (
     BaseTool,
     ComputeMetricTool,
@@ -31,6 +32,11 @@ __all__ = [
     "route",
     "EvidenceAssembler",
     "EvidencePack",
+    "ContextBuilder",
+    "ContextPolicy",
+    "ContextResolver",
+    "ContextPayload",
+    "ResolvedContext",
     "BaseTool",
     "ComputeMetricTool",
     "ComparePeriodsTool",
