@@ -14,7 +14,7 @@ FinRAG（财报数值推理 RAG）的升级版 —— 从「RAG 玩具」到「�
 | 1 数据基础 | ✅ 基本完成 | ReportDoc/FinancialFact/Provenance + Excel/CSV + 原生 PDF + 结构切块 + DuckDB + 基础校验 |
 | 2 分析能力 | ✅ 基本完成 | 科目映射 + 指标注册中心（16 指标）+ 多期比较 + 工具注册/Schema |
 | 3 Agent 闭环 | ✅ 完成 | LangGraph 编排 + Intent Router + AgentState + Checkpointer + Function Calling + BM25 召回 + 证据组装 |
-| 4 产品界面 | 🔄 进行中 | 上传/对话/引用/运行记录（MVP 已上线）+ 指标卡片/导出 + Skill + 长期记忆 |
+| 4 产品界面 | ✅ 基本完成 | 上传/对话/指标卡片/趋势/技能/导出/多轮续接 + Skill + 长期记忆 + 评测 D |
 | 5 企业增强 | 未开始 | 复杂 PDF 视觉 + 多公司比较 + 审计/权限 + Docker |
 
 ## 目录结构
@@ -64,7 +64,7 @@ finance-agent/
 
 **待阶段 4**：Checkpointer（状态持久化/恢复）、Function Calling（LLM 决策层接入）、AnalysisRun 落库、BGE/Reranker。
 
-## 阶段 4 成果（检索评测 / 语义召回 / 产品界面）
+## 阶段 4 成果（检索评测 / 语义召回 / 产品界面 / Skill / 长期记忆 / 评测 D）
 
 **评测 C（RAG 检索）**：`evaluation/eval_retrieval.py` 对真实财报（公牛集团 2024 年报，606 片段）的 10 个财务查询计算 Recall@5 / Precision@5 / MRR / nDCG / Latency，BM25 为基线：**Recall 0.632 / Precision 0.300 / MRR 0.667 / nDCG 0.534，Latency 13.7ms**。
 
@@ -72,12 +72,18 @@ finance-agent/
 
 > 模型下载（可选）：`embedder=None` 时无需装 `sentence-transformers`。启用 BGE 前，先下载模型到 `models/bge-small-zh-v1.5`（HF 镜像或 modelscope），代码优先加载本地路径。
 
-**产品界面（MVP）**：`app/service.py`（FinanceService：文件解析→入库→切块→构建 AgentGraph 的服务层）+ `app/main.py`（FastAPI：上传/提问/公司列表/运行记录）+ `app/static/index.html`（极简单页：上传 + 对话 + 事实/指标/证据引用）。核心闭环已打通——上传财报后可直接提问，答案附带来源引用与缺失/冲突提示。
+**产品界面**：`app/service.py`（FinanceService 服务层）+ `app/main.py`（FastAPI）+ `app/static/index.html`（深色金融风单页）。完整闭环——上传财报 → 对话提问（答案带来源引用 + 缺失/冲突提示）→ 指标概览卡片与趋势 → 技能分析 → 报告导出（Markdown）→ 多轮对话自动续接上次公司。
+
+**Skill 技能层**：`agent/skills/` 5 个可复用技能（三表综合分析/盈利能力/现金流质量/财务风险信号/年报摘要），每个含适用范围/输入/流程/依赖工具/输出/校验规则/评测样例；复用 Hook 三层校验，静态注册不动态执行代码。
+
+**长期记忆**：`agent/memory.py` `SqliteMemoryStore` 持久化（跨会话），问答把「最近分析公司」作兜底续接；界面暴露记忆增删查 API。
+
+**评测 D（系统安全）**：`evaluation/eval_security.py` 六类场景（恶意文档/提示词注入/参数越界/预算循环终止/错误路由/记忆污染）端到端验证安全机制；顺带修复 graph/skills 的 Hook 列表漏接 `PromptInjectionHook` 的缺口。
 
 ## 快速开始
 
 ```bash
 pip install -r requirements.txt
-pytest            # 运行测试（151 个用例）
+pytest            # 运行测试（168 个用例）
 uvicorn app.main:app --reload   # 启动界面 http://127.0.0.1:8000
 ```
