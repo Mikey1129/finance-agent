@@ -1,8 +1,8 @@
-"""retrieval.retriever —— BM25 基线检索 + 元数据过滤（方案 5.11）。
+"""retrieval.retriever —— 混合检索（BM25 + BGE）+ 元数据过滤（方案 5.11）。
 
-第一版 BM25 基线（BGE 语义召回与 Reranker 阶段 3/4 接入）：
 - 中文分词用字符 2-gram（无 jieba 依赖），英文按字母数字切词；
 - BM25 为 Okapi 变体，纯 Python 实现（可替换为 rank-bm25，不改变接口）；
+- BGE 语义召回由 embedding.py 提供，与 BM25 做 RRF 融合（embedder 缺失/失败降级纯 BM25）；
 - 召回前按公司/年度/章节做元数据过滤——财报 RAG 极易召回「语义相似但非当前
   分析对象」的文本，不能只靠相似度（方案 5.11）。
 
@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import math
 import re
+
+import numpy as np
 
 from domain import EvidenceChunk
 
@@ -82,13 +84,67 @@ def _match_meta(
     return True
 
 
-class Retriever:
-    """BM25 基线检索器：元数据过滤 → BM25 打分 → 排序 → 去重 → top_k。"""
+_RRF_K = 60  # RRF 融合常数（业界常用默认）
 
-    def __init__(self, chunks: list[EvidenceChunk]):
+
+def _rrf_fuse(ranked_a: list[int], ranked_b: list[int], top_k: int) -> list[int]:
+    """Reciprocal Rank Fusion：按两路排名融合，得分 = Σ 1/(k + rank)。"""
+    scores: dict[int, float] = {}
+    for rank, idx in enumerate(ranked_a, start=1):
+        scores[idx] = scores.get(idx, 0.0) + 1.0 / (_RRF_K + rank)
+    for rank, idx in enumerate(ranked_b, start=1):
+        scores[idx] = scores.get(idx, 0.0) + 1.0 / (_RRF_K + rank)
+    return sorted(scores, key=lambda i: -scores[i])[:top_k]
+
+
+class Retriever:
+    """混合检索器：元数据过滤 → BM25 词法 + BGE 语义 → RRF 融合 → 去重 → top_k。
+
+    embedder 为 None（或编码失败）时降级为纯 BM25，行为与基线一致。
+    方案 5.11「分别召回 → 合并去重 → 重排」——重排（Reranker）待数据证明后接入。
+    """
+
+    def __init__(self, chunks: list[EvidenceChunk], embedder=None):
         self.chunks = chunks
+        self.embedder = embedder
         self._doc_tokens = [tokenize(c.text) for c in chunks]
         self._index = BM25Index(self._doc_tokens)
+        self._doc_embeddings: np.ndarray | None = None  # 懒构建（首次向量召回时）
+
+    def _filtered_indices(
+        self, company_name: str | None, fiscal_year: int | None, section: str | None
+    ) -> list[int]:
+        return [
+            i for i, c in enumerate(self.chunks)
+            if _match_meta(c, company_name, fiscal_year, section)
+        ]
+
+    def _bm25_ranked(self, query_tokens: list[str], indices: list[int], top_n: int) -> list[int]:
+        scored = [(self._index.score(query_tokens, self._doc_tokens[i]), i) for i in indices]
+        scored = [(s, i) for s, i in scored if s > 0]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [i for _, i in scored[:top_n]]
+
+    def _vec_ranked(self, query: str, indices: list[int], top_n: int) -> list[int]:
+        """BGE 语义召回；embedder 不可用返回空列表（调用方降级纯 BM25）。"""
+        if self.embedder is None or not indices:
+            return []
+        if self._doc_embeddings is None:
+            self._build_doc_embeddings()
+        if self._doc_embeddings is None:
+            return []
+        q = self.embedder.encode([query])
+        if q is None:
+            return []
+        sims = self._doc_embeddings[indices] @ q[0]  # 归一化向量点积 = 余弦相似度
+        order = np.argsort(-sims)
+        return [indices[i] for i in order[:top_n]]
+
+    def _build_doc_embeddings(self) -> None:
+        if self.embedder is None:
+            return
+        vecs = self.embedder.encode([c.text for c in self.chunks])
+        self._doc_embeddings = np.asarray(vecs, dtype="float32") if vecs is not None else None
 
     def retrieve(
         self,
@@ -98,21 +154,21 @@ class Retriever:
         section: str | None = None,
         top_k: int = 5,
     ) -> list[EvidenceChunk]:
-        """按元数据过滤后 BM25 排序，返回去重后的 top_k 个片段。"""
-        query_tokens = tokenize(query)
-        scored: list[tuple[float, int]] = []
-        for i, chunk in enumerate(self.chunks):
-            if not _match_meta(chunk, company_name, fiscal_year, section):
-                continue
-            s = self._index.score(query_tokens, self._doc_tokens[i])
-            if s > 0:
-                scored.append((s, i))
-        scored.sort(key=lambda x: x[0], reverse=True)
+        """元数据过滤 → BM25(+BGE 语义) → RRF 融合 → 去重 → top_k 个片段。"""
+        indices = self._filtered_indices(company_name, fiscal_year, section)
+        if not indices:
+            return []
+
+        top_n = max(top_k * 4, 20)  # 融合候选池，保证 top_k 有足够来源
+        bm25_ranked = self._bm25_ranked(tokenize(query), indices, top_n)
+        vec_ranked = self._vec_ranked(query, indices, top_n)
+
+        ranked = _rrf_fuse(bm25_ranked, vec_ranked, top_k) if vec_ranked else bm25_ranked[:top_k]
 
         # 按 chunk_id 去重（保持排序，防御性处理重复 chunk）
         result: list[EvidenceChunk] = []
         seen: set[str] = set()
-        for _, i in scored[:top_k]:
+        for i in ranked:
             chunk = self.chunks[i]
             if chunk.chunk_id not in seen:
                 seen.add(chunk.chunk_id)

@@ -63,9 +63,17 @@ finance-agent/
 
 **待阶段 4**：Checkpointer（状态持久化/恢复）、Function Calling（LLM 决策层接入）、AnalysisRun 落库、BGE/Reranker。
 
+## 阶段 4 成果（检索评测 / 语义召回）
+
+**评测 C（RAG 检索）**：`evaluation/eval_retrieval.py` 对真实财报（公牛集团 2024 年报，606 片段）的 10 个财务查询计算 Recall@5 / Precision@5 / MRR / nDCG / Latency，BM25 为基线：**Recall 0.632 / Precision 0.300 / MRR 0.667 / nDCG 0.534，Latency 13.7ms**。
+
+**BGE 语义召回（实测劣化，默认关闭）**：`retrieval/embedding.py` 封装 bge-small-zh-v1.5，`retriever.py` 用 RRF 与 BM25 混合。对比评测显示混合召回**全面劣于纯 BM25**——Recall 0.632→0.325、MRR 0.667→0.400、Latency 13.7ms→5.2s：财报查询依赖精确科目词与数字，通用语义模型对术语/数字不敏感，反把「语义沾边但非当前科目」的片段挤进 top-k。故 `embedder` 可选、默认关闭（纯 BM25）；代码与单测保留作实验开关。
+
+> 模型下载（可选）：`embedder=None` 时无需装 `sentence-transformers`。启用 BGE 前，先下载模型到 `models/bge-small-zh-v1.5`（HF 镜像或 modelscope），代码优先加载本地路径。
+
 ## 快速开始
 
 ```bash
 pip install -r requirements.txt
-pytest            # 运行测试（109 个用例）
+pytest            # 运行测试（146 个用例）
 ```

@@ -164,10 +164,15 @@ def eval_retrieval(
     company_name: str = "公牛集团",
     fiscal_year: int = 2024,
     k: int = 5,
+    embedder=None,
 ) -> RetrievalEvalResult:
-    """对一组查询跑 BM25 检索，计算 Recall@K / Precision@K / MRR / nDCG@K / Latency。"""
+    """对一组查询跑检索，计算 Recall@K / Precision@K / MRR / nDCG@K / Latency。
+
+    embedder 为 None 时是纯 BM25 基线；传 BGEEmbedder 时是 BM25+BGE 混合召回，
+    用同一评测集对比两者（方案「不以回答流畅判断好坏」）。
+    """
     queries = queries or BUILTIN_QUERIES
-    retriever = Retriever(chunks)
+    retriever = Retriever(chunks, embedder=embedder)
     result = RetrievalEvalResult(k=k)
 
     for q in queries:

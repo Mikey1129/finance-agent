@@ -10,6 +10,9 @@ pytest>=8.0
 # === 阶段3：Agent 编排 ===
 langgraph>=1.0
 
+# === 阶段4：BGE 语义检索（可选——embedder=None 时纯 BM25 无需装；依赖 torch，模型从 HF/镜像下载）===
+sentence-transformers>=3.0
+
 # === 阶段4+：产品界面 / LLM 决策层（后续阶段按需启用）===
 # fastapi
 # uvicorn
