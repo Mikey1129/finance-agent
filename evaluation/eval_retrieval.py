@@ -23,36 +23,50 @@ import re
 import time
 from dataclasses import dataclass, field
 
-from domain import StatementType
+from domain import FinancialFact, StatementType
 from ingestion.pdf_parser import parse_pdf
 from retrieval.chunker import chunk_pages
+from retrieval.fact_retriever import FactRetriever
 from retrieval.retriever import Retriever
 
 
 # -- 评测集 ---------------------------------------------------------------
 @dataclass
 class RetrievalQuery:
-    """一个检索评测查询：问题 + gold 证据文本锚点。"""
+    """一个检索评测查询：问题 + gold 证据。
+
+    kind="chunk"：gold 为文本锚点（gold_phrases），走全文 chunk 检索（定性/归因类）。
+    kind="fact"：gold 为标准科目 + 目标数值（元），走结构化 facts 检索（数值类）。
+    """
 
     qid: str
     query: str
-    gold_phrases: list[str]  # 任一短语命中（去空白子串）即视为 gold 证据
+    gold_phrases: list[str]  # chunk 检索的文本锚点（任一短语命中即视为 gold 证据）
+    kind: str = "chunk"       # "chunk" | "fact"
+    gold_item: str | None = None                # fact 检索：标准科目标识符
+    gold_values: list[float] = field(default_factory=list)  # fact 检索：目标数值（元）
 
 
 # 公牛集团 2024 年报真实财务问题 + 正确证据锚点（人工标注，锚点取自年报正文原文）。
 # 锚点优先用「精确数值/独特短语」而非「科目+数值」严格连接，避免因措辞差异（如
 # 「营业收入为人民币168.31 亿元」）漏标正确证据。
 BUILTIN_QUERIES: list[RetrievalQuery] = [
-    RetrievalQuery("q01", "公牛集团2024年营业收入是多少？", ["168.31亿元"]),
-    RetrievalQuery("q02", "2024年归母净利润是多少？同比增长多少？", ["42.72亿元"]),
-    RetrievalQuery("q03", "2024年经营活动产生的现金流量净额是多少？", ["3,730,346,896.27"]),
+    RetrievalQuery("q01", "公牛集团2024年营业收入是多少？", ["168.31亿元"],
+                   kind="fact", gold_item="revenue", gold_values=[16_830_541_086.13]),
+    RetrievalQuery("q02", "2024年归母净利润是多少？同比增长多少？", ["42.72亿元"],
+                   kind="fact", gold_item="net_profit", gold_values=[4_272_204_565.03]),
+    RetrievalQuery("q03", "2024年经营活动产生的现金流量净额是多少？", ["3,730,346,896.27"],
+                   kind="fact", gold_item="operating_cash_flow", gold_values=[3_730_346_896.27]),
     RetrievalQuery("q04", "经营活动现金流量净额为什么下降？", ["预收货款下降"]),
     RetrievalQuery("q05", "2024年度利润分配方案是什么？", ["每10股派发现金红利24.00元"]),
-    RetrievalQuery("q06", "2024年末存货余额是多少？", ["1,573,672,819.32"]),
+    RetrievalQuery("q06", "2024年末存货余额是多少？", ["1,573,672,819.32"],
+                   kind="fact", gold_item="inventory", gold_values=[1_573_672_819.32]),
     RetrievalQuery("q07", "2024年公司整体毛利率是多少？", ["43.27"]),
-    RetrievalQuery("q08", "2024年研发费用投入多少？", ["745,510,215.17"]),
+    RetrievalQuery("q08", "2024年研发费用投入多少？", ["745,510,215.17"],
+                   kind="fact", gold_item="rnd_expenses", gold_values=[745_510_215.17]),
     RetrievalQuery("q09", "新能源业务收入及增速如何？", ["新能源业务收入7.77亿元", "104.75%"]),
-    RetrievalQuery("q10", "2024年末货币资金余额是多少？", ["5,020,380,352.96"]),
+    RetrievalQuery("q10", "2024年末货币资金余额是多少？", ["5,020,380,352.96"],
+                   kind="fact", gold_item="cash_and_equivalents", gold_values=[5_020_380_352.96]),
 ]
 
 
@@ -113,6 +127,7 @@ class QueryResult:
     n_gold: int
     ranked_ids: list[str]
     gold_ids: set[str]
+    kind: str = "chunk"  # "chunk" | "fact"
     recall: float = 0.0
     precision: float = 0.0
     mrr: float = 0.0
@@ -158,6 +173,34 @@ def build_chunks(path: str, company_name: str, fiscal_year: int, report_id: str 
     return chunk_pages(parsed.pages, company_name, fiscal_year, report_id)
 
 
+def build_facts(path: str, company_name: str, fiscal_year: int) -> list[FinancialFact]:
+    """解析三张报表，产出结构化财务事实（数值型查询的检索源）。
+
+    数值查询横跨三表：存货/货币资金在资产负债表、营收/研发在利润表、
+    经营现金流在现金流量表。只解析一张表会漏科目（评测 C 早期只解析资产负债表）。
+    """
+    facts: list[FinancialFact] = []
+    for st in (StatementType.BALANCE_SHEET, StatementType.INCOME_STATEMENT, StatementType.CASH_FLOW):
+        facts.extend(parse_pdf(path, company_name, fiscal_year, st).facts)
+    return facts
+
+
+def fact_recall_at_k(
+    ranked_facts: list[FinancialFact], gold_item: str | None, gold_values: list[float], k: int
+) -> float:
+    """数值型查询的 Recall@K：每个目标数值是否被前 K 个事实命中（去重）。"""
+    if not gold_values or gold_item is None:
+        return 0.0
+    hit_values = 0
+    for gv in gold_values:
+        if any(
+            f.standard_item == gold_item and abs((f.value or 0.0) - gv) < 1e-6
+            for f in ranked_facts[:k]
+        ):
+            hit_values += 1
+    return hit_values / len(gold_values)
+
+
 def eval_retrieval(
     chunks,
     queries: list[RetrievalQuery] | None = None,
@@ -193,4 +236,58 @@ def eval_retrieval(
                 latency_ms=latency,
             )
         )
+    return result
+
+
+def eval_fact_retrieval(
+    facts: list[FinancialFact],
+    queries: list[RetrievalQuery] | None = None,
+    company_name: str = "公牛集团",
+    fiscal_year: int = 2024,
+    k: int = 5,
+) -> RetrievalEvalResult:
+    """数值型查询走结构化 facts 检索（FactRetriever），计算 Recall@K / Latency。"""
+    queries = queries or BUILTIN_QUERIES
+    retriever = FactRetriever(facts)
+    result = RetrievalEvalResult(k=k)
+
+    for q in queries:
+        if q.kind != "fact":
+            continue
+        t0 = time.perf_counter()
+        ranked = retriever.retrieve(q.query, company_name=company_name, fiscal_year=fiscal_year, top_k=k)
+        latency = (time.perf_counter() - t0) * 1000.0
+        result.queries.append(
+            QueryResult(
+                qid=q.qid, query=q.query, n_gold=len(q.gold_values),
+                ranked_ids=[f.fact_id for f in ranked], gold_ids=set(),
+                kind="fact",
+                recall=fact_recall_at_k(ranked, q.gold_item, q.gold_values, k),
+                latency_ms=latency,
+            )
+        )
+    return result
+
+
+def eval_retrieval_mixed(
+    chunks: list,
+    facts: list[FinancialFact],
+    queries: list[RetrievalQuery] | None = None,
+    company_name: str = "公牛集团",
+    fiscal_year: int = 2024,
+    k: int = 5,
+    reranker=None,
+) -> RetrievalEvalResult:
+    """分路径检索评测：数值型走 facts、定性型走 chunk，合并计算综合 Recall@K。
+
+    落实「财务事实由数据层提供」：数值查询的答案在 facts，文本证据负责定性/归因。
+    综合 Recall 是所有查询（fact + chunk）Recall@K 的平均。
+    """
+    queries = queries or BUILTIN_QUERIES
+    result = eval_fact_retrieval(facts, queries, company_name, fiscal_year, k)
+
+    # chunk 型查询复用原 eval_retrieval 的检索逻辑
+    chunk_queries = [q for q in queries if q.kind == "chunk"]
+    chunk_result = eval_retrieval(chunks, chunk_queries, company_name, fiscal_year, k, reranker=reranker)
+    result.queries.extend(chunk_result.queries)
     return result

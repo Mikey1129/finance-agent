@@ -76,6 +76,8 @@ finance-agent/
 
 **评测结论（公牛 2024 年报，606 chunk，k=5，真实 qwen3-rerank）**：BM25 基线 Recall@5=0.632 / nDCG@5=0.534 / MRR=0.667；**BM25+qwen3-rerank Recall@5=0.740 / nDCG@5=0.663 / MRR=0.703**——3 查询改善（营收 0.25→0.50、归母净利润 0.67→1.00、货币资金 0.50→1.00）、0 劣化，正中 BM25 精确数值查询的弱项。故**默认开启**：`build_reranker()` 检测到 `DASHSCOPE_API_KEY` 即启用，无 key 自动降级纯 BM25（行为与接入前一致）。代价：每查询延迟 8ms→~526ms（一次 API 调用）。`rank_fn` 可注入，单测不触网。
 
+**评测 C 架构纠偏（数值查询走结构化 facts，Recall 0.740→1.000）**：上述 0.740 是「全文 chunk 检索」测**数值型查询**（存货/营收/现金流「是多少」）的结果——但这类问句不含答案数字，BM25 词法只能靠高频科目词匹配，命中率有天花板（实测扩候选池 / 表格行 chunk 化 / 去数字改写均不升反降）。数值查询的答案本在结构化 `financial_facts` 里（方案第 6 章「财务事实由数据层提供」）。故新增 `retrieval/fact_retriever.py`：`extract_item` 把问句映射到标准科目（长全称优先 + 口语简称如「归母净利润」），`FactRetriever` 按公司/年度/合并范围精确匹配 facts；评测集 `RetrievalQuery` 增加 `kind`/`gold_item`/`gold_values` 区分「数值型（fact）vs 定性型（chunk）」，`eval_retrieval_mixed` 分路径评测。**综合 Recall@5=1.000**（6 个数值查询走 facts 全命中，4 个定性查询走 chunk 保持 1.0），是「agent 用结构化数据回答数值问题」的真实能力，非文本检索的硬凑。
+
 **产品界面**：`app/service.py`（FinanceService 服务层）+ `app/main.py`（FastAPI）+ `app/static/index.html`（深色金融风单页）。完整闭环——上传财报 → 对话提问（答案带来源引用 + 缺失/冲突提示）→ 指标概览卡片与趋势 → 技能分析 → 报告导出（Markdown）→ 多轮对话自动续接上次公司。
 
 **Skill 技能层**：`agent/skills/` 5 个可复用技能（三表综合分析/盈利能力/现金流质量/财务风险信号/年报摘要），每个含适用范围/输入/流程/依赖工具/输出/校验规则/评测样例；复用 Hook 三层校验，静态注册不动态执行代码。
