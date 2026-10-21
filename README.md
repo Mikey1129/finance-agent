@@ -78,6 +78,8 @@ finance-agent/
 
 **评测 C 架构纠偏（数值查询走结构化 facts，Recall 0.740→1.000）**：上述 0.740 是「全文 chunk 检索」测**数值型查询**（存货/营收/现金流「是多少」）的结果——但这类问句不含答案数字，BM25 词法只能靠高频科目词匹配，命中率有天花板（实测扩候选池 / 表格行 chunk 化 / 去数字改写均不升反降）。数值查询的答案本在结构化 `financial_facts` 里（方案第 6 章「财务事实由数据层提供」）。故新增 `retrieval/fact_retriever.py`：`extract_item` 把问句映射到标准科目（长全称优先 + 口语简称如「归母净利润」），`FactRetriever` 按公司/年度/合并范围精确匹配 facts；评测集 `RetrievalQuery` 增加 `kind`/`gold_item`/`gold_values` 区分「数值型（fact）vs 定性型（chunk）」，`eval_retrieval_mixed` 分路径评测。**综合 Recall@5=1.000**（6 个数值查询走 facts 全命中，4 个定性查询走 chunk 保持 1.0），是「agent 用结构化数据回答数值问题」的真实能力，非文本检索的硬凑。
 
+**定性检索评测扩容（51 个真实问题）**：上述定性查询（kind="chunk"）原只有 4 个，1.0 的 Recall 无统计意义。现从公牛 2024 年报 MD&A/附注 + 长鑫招股书审计报告/附注原文标注 **51 个定性问题**（公牛 32 + 长鑫 19，`evaluation/qualitative_queries.py`），每个标 gold_phrases（原文独特短语，去空白子串匹配），覆盖归因/业务/研发/风险/关联方/股份支付/金融风险/承诺/分部等类型。纯 BM25 基线（k=5）：**综合 Recall@5=0.892 / Precision@5=0.243 / MRR=0.785**（公牛 0.969/0.263/0.806，长鑫 0.763/0.211/0.750），43/51 查询 Recall=1.0。剩余失败（审计机构名、持股平台、越南子公司等低频实体/表格信息）暴露 BM25 词法检索的真实短板，正是后续 reranker/语义召回应重点补的方向。入口：`python -m evaluation.run_eval_retrieval`（逐条打印命中 + 汇总，`--reranker` 接入 qwen3-rerank，`--company` 选公司）；锚点命中 100% 由 `tests/test_qualitative_queries.py` 锁住防回归。
+
 **产品界面**：`app/service.py`（FinanceService 服务层）+ `app/main.py`（FastAPI）+ `app/static/index.html`（深色金融风单页）。完整闭环——上传财报 → 对话提问（答案带来源引用 + 缺失/冲突提示）→ 指标概览卡片与趋势 → 技能分析 → 报告导出（Markdown）→ 多轮对话自动续接上次公司。
 
 **Skill 技能层**：`agent/skills/` 5 个可复用技能（三表综合分析/盈利能力/现金流质量/财务风险信号/年报摘要），每个含适用范围/输入/流程/依赖工具/输出/校验规则/评测样例；复用 Hook 三层校验，静态注册不动态执行代码。
