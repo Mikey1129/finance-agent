@@ -183,6 +183,7 @@ def parse_tabular(
     period_type: PeriodType | None = None,
     consolidation_scope: str = "consolidated",
     source_file: str | None = None,
+    row_offset: int = 0,
 ) -> list[FinancialFact]:
     """核心表格解析：第一列=科目名，其余列=各期数值。
 
@@ -209,7 +210,11 @@ def parse_tabular(
             std_value = convert_to_yuan(value, col_unit) if value is not None else None
 
             period = period_map.get(c_idx) if period_map else extract_period(headers[c_idx])
-            fact_id = f"{report_id}:{c_idx}:{r_idx}"
+            # fact_id 必须纳入合并范围（consolidated=合并报表 / parent_only=母公司单体），
+            # 否则同一 PDF 的「合并资产负债表」与「母公司资产负债表」同科目同位置会撞主键。
+            # 行号用 r_idx + row_offset：跨页续表的行号会从 0 重新编号，必须叠加上一页
+            # 累计的行偏移，否则同一张表跨页时同位置科目也会撞主键。
+            fact_id = f"{report_id}:{consolidation_scope}:{c_idx}:{r_idx + row_offset}"
             facts.append(
                 FinancialFact(
                     fact_id=fact_id,

@@ -58,6 +58,28 @@ def test_period_inheritance_via_parse_tabular():
     assert {f.period for f in facts} == {"2024", "2023"}
 
 
+def test_parse_tabular_fact_id_includes_scope_and_row_offset():
+    """fact_id 必须区分合并范围（scope）与跨页行偏移（row_offset），否则主键冲突。"""
+    headers = ["项目", "2024年12月31日"]
+    rows = [["货币资金", "100.00"]]
+    a = parse_tabular(
+        headers, rows, "公司", 2024, StatementType.BALANCE_SHEET, "r1",
+        unit="元", consolidation_scope="consolidated",
+    )
+    b = parse_tabular(
+        headers, rows, "公司", 2024, StatementType.BALANCE_SHEET, "r1",
+        unit="元", consolidation_scope="parent_only",
+    )
+    c = parse_tabular(
+        headers, rows, "公司", 2024, StatementType.BALANCE_SHEET, "r1",
+        unit="元", consolidation_scope="consolidated", row_offset=5,
+    )
+    assert "consolidated" in a[0].fact_id
+    assert "parent_only" in b[0].fact_id
+    assert a[0].fact_id != b[0].fact_id, "合并/母公司报表 fact_id 必须区分"
+    assert a[0].fact_id != c[0].fact_id, "跨页行偏移必须计入 fact_id"
+
+
 @pytest.mark.skipif(not _REAL_PDF.exists(), reason="真实年报 PDF 未在本地")
 def test_real_pdf_consolidated_balance_sheet_balanced():
     """整表级评测：公牛集团 2024 年报合并资产负债表两期均应平衡。
@@ -102,3 +124,15 @@ def test_real_pdf_statements_are_separated():
     assert "operating_cash_flow" in cash_items
     assert "revenue" not in cash_items
     assert "total_assets" not in cash_items
+
+
+@pytest.mark.skipif(not _REAL_PDF.exists(), reason="真实年报 PDF 未在本地")
+def test_real_pdf_fact_ids_are_unique():
+    """fact_id 唯一性：公牛年报含合并+母公司三张表且跨页，fact_id 不得重复（防主键冲突回归）。"""
+    for st in (StatementType.BALANCE_SHEET, StatementType.INCOME_STATEMENT, StatementType.CASH_FLOW):
+        result = parse_pdf(str(_REAL_PDF), "公牛集团", 2024, st)
+        ids = [f.fact_id for f in result.facts]
+        assert len(ids) == len(set(ids)), (
+            f"{st.value} 存在重复 fact_id（{len(ids) - len(set(ids))} 个）"
+        )
+        assert len(ids) > 0

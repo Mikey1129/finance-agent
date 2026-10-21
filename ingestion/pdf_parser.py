@@ -100,6 +100,7 @@ def _table_to_facts(
     source_file: str | None,
     unit: str | None = None,
     consolidation_scope: str = "consolidated",
+    row_offset: int = 0,
 ) -> list[FinancialFact]:
     """按给定表头 + 数据行，复用 parse_tabular 转为财务事实。"""
     return parse_tabular(
@@ -112,6 +113,7 @@ def _table_to_facts(
         unit=unit,
         consolidation_scope=consolidation_scope,
         source_file=source_file,
+        row_offset=row_offset,
     )
 
 
@@ -146,6 +148,7 @@ def parse_pdf(
         current_scope: str = "consolidated"
         last_headers: list | None = None
         current_unit: str | None = None
+        current_row_offset: int = 0  # 跨页续表累计行偏移（新报表标题处归零）
 
         for page in page_list:
             text = page.extract_text() or ""
@@ -179,6 +182,7 @@ def parse_pdf(
                         # 新报表开始：重置表头/单位继承（标题下方才是新报表正文）
                         last_headers = None
                         current_unit = None
+                        current_row_offset = 0
                     continue
 
                 if current_statement != statement_type:
@@ -206,7 +210,9 @@ def parse_pdf(
                     path,
                     unit=current_unit,
                     consolidation_scope=current_scope,
+                    row_offset=current_row_offset,
                 )
+                current_row_offset += len(data_rows)
                 for f in fs:
                     f.provenance_id = f"prov-{f.fact_id}"
                     provenance.append(
