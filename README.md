@@ -100,7 +100,7 @@ finance-agent/
 
 **缓存与上下文压缩**：`retrieval/cache.py` `RetrievalCache`（TTL + 容量上限，满时淘汰最早到期，命中返回浅拷贝），接入 `Retriever`（可选，默认关闭）；`agent/summary.py` `HistorySummarizer` 把多轮历史压缩为「最近 N 轮原始对话 + 更早历史的实体摘要」（提取公司/期间/科目/指标，不把模型结论当事实）。
 
-**复杂 PDF 视觉解析兜底**：`ingestion/vision_parser.py` 提供 `is_scanned_pdf`（无文本层扫描件检测）+ `VisionParser` 抽象接口 + `QwenVLVisionParser`（DashScope 多模态，测试 mock）+ `parse_pdf_with_fallback`（pdfplumber 优先，扫描件且配置视觉时兜底恢复可检索文本）；`FinanceService` 增加可选 `vision_parser` 参数（默认关闭，行为不变）。
+**复杂 PDF 视觉解析兜底（Qwen3-VL）**：`ingestion/vision_parser.py` 提供 `is_scanned_pdf`（无文本层扫描件检测）+ `VisionParser` 抽象接口 + `QwenVLVisionParser`（DashScope OpenAI 兼容多模态，默认 `qwen3-vl-plus`，`vl_high_resolution_images` 提像素上限专治财报小字表格 OCR）+ `parse_pdf_with_fallback`（pdfplumber 优先，扫描件走视觉）。视觉识别输出「标题 + 单位 + markdown 表格」，复用 `_match_title` 定位报表范围、`parse_tabular` 提取 facts——扫描件同样能查数值、算指标、做资产负债表平衡校验。`build_vision_parser()` 从 `DASHSCOPE_VL_API_KEY`（回退 `DASHSCOPE_API_KEY`）读 key 自动启用，无 key 则 `FinanceService` 行为不变（仅 pdfplumber）。
 
 **Docker 容器化**：`Dockerfile`（python:3.11-slim，排除可选重依赖 sentence-transformers/torch 减小镜像）+ `.dockerignore`（排除 storage/模型/缓存）+ `docker-compose.yml`（端口 8000 + storage volume 挂载 + 可选 API key 环境变量）。
 

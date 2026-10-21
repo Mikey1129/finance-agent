@@ -27,7 +27,7 @@ from domain import FinancialFact, StatementType
 from finance.metrics import METRIC_DEFINITIONS, compute_metrics, compute_series
 from finance.store import Store
 from ingestion.excel_parser import parse_csv, parse_excel
-from ingestion.vision_parser import parse_pdf_with_fallback
+from ingestion.vision_parser import build_vision_parser, parse_pdf_with_fallback
 from retrieval.chunker import chunk_pages
 
 # PDF 三大报表都要入库（parse_pdf 每次只提取一个目标报表，故循环三次）
@@ -85,7 +85,8 @@ class FinanceService:
         self.memory = SqliteMemoryStore(memory_path)
         self.audit_log = AuditLog(audit_path)
         self.access_policy = AccessPolicy()
-        self.vision_parser = vision_parser  # 扫描件视觉兜底（可选，默认 None）
+        # 扫描件视觉兜底：显式传参优先；None 时按环境变量自动启用（有视觉 key 才真启用）
+        self.vision_parser = build_vision_parser() if vision_parser is None else vision_parser
         self._chunks: list = []
         self._graph: AgentGraph | None = None  # 懒构建，ingest 后失效
 

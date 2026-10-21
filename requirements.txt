@@ -20,3 +20,7 @@ python-multipart>=0.0.9
 httpx>=0.27
 
 # === 阶段5后：Reranker 重排（DashScope qwen3-rerank，复用 httpx 直连，无需 SDK；key 走 DASHSCOPE_API_KEY）===
+
+# === 阶段5：Qwen3-VL 视觉兜底（扫描件渲染 PDF→图像；虽经 pdfplumber 间接带入，显式声明）===
+pypdfium2>=4
+Pillow>=10
