@@ -105,7 +105,7 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         "ROE = 净利润 / 所有者权益",
         StatementType.INCOME_STATEMENT, "ratio",
         numerator=("net_profit",), denominator=("total_equity",),
-        description="简化口径：分母用期末所有者权益（严格应为平均权益）。",
+        description="简化口径：分子用含少数股东损益的净利润、分母用含少数股东权益的期末所有者权益（二者口径自洽；严格杜邦口径应为归母净利润/平均归母权益）。",
     ),
     # -- 偿债能力 ----------------------------------------------------------
     "debt_to_asset_ratio": MetricDefinition(
@@ -267,7 +267,7 @@ def _compute(
         result.inputs.update(num_vals)
         result.inputs.update(sub_vals)
         result.inputs.update(den_vals)
-        if num is None or den is None or (sub is not None and defn.subtract and sub is None):
+        if num is None or den is None or (defn.subtract and sub is None):
             result.status = MetricStatus.INSUFFICIENT_DATA
             return result
         numerator = num - (sub if sub is not None else 0.0)

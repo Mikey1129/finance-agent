@@ -125,6 +125,21 @@ def test_insufficient_data_when_missing_item():
     assert r.value is None
 
 
+def test_missing_subtract_item_returns_insufficient():
+    """缺减项科目（营业成本/存货）时不得把缺失当 0，否则毛利率会错算成 100%。"""
+    # 毛利率：缺营业成本 → insufficient_data，而非 (营收-0)/营收 = 1.0
+    facts_no_cost = [f for f in _make_facts() if f.standard_item != "cost_of_revenue"]
+    r = compute_metric("gross_margin", facts_no_cost, "2024")
+    assert r.status is MetricStatus.INSUFFICIENT_DATA
+    assert r.value is None
+
+    # 速动比率：缺存货 → insufficient_data，而非退化成流动比率
+    facts_no_inv = [f for f in _make_facts() if f.standard_item != "inventory"]
+    r2 = compute_metric("quick_ratio", facts_no_inv, "2024")
+    assert r2.status is MetricStatus.INSUFFICIENT_DATA
+    assert r2.value is None
+
+
 def test_growth_requires_prev_period():
     """最早期间无上期，增长率应 insufficient_data（不编造）。"""
     facts = _make_facts()

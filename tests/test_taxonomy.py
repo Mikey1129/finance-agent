@@ -26,6 +26,12 @@ def test_unit_scale():
     assert unit_scale("亿元") == 1e8
     assert unit_scale(None) == 1.0
     assert unit_scale("millions") == 1e6
+    # 美元复合单位（海外财报）
+    assert unit_scale("美元") == 1.0
+    assert unit_scale("千美元") == 1e3
+    assert unit_scale("万美元") == 1e4
+    assert unit_scale("百万美元") == 1e6
+    assert unit_scale("亿美元") == 1e8
 
 
 def test_convert_to_yuan():
@@ -50,7 +56,7 @@ def test_map_item_strips_op_prefix():
 
 def test_map_item_strips_number_prefix():
     """附注表数字序号前缀应被剥离。"""
-    assert map_item("2.应收款项融资") == "notes_receivable"
+    assert map_item("2.应收款项融资") == "financing_receivables"
     assert map_item("1.归属于母公司股东的净利润（净亏损以“-”号填列）") == "net_profit_parent"
 
 

@@ -31,6 +31,7 @@ STANDARD_ITEMS: dict[str, tuple[str, StatementType]] = {
     "total_equity": ("所有者权益合计", StatementType.BALANCE_SHEET),
     "trading_financial_assets": ("交易性金融资产", StatementType.BALANCE_SHEET),
     "notes_receivable": ("应收票据", StatementType.BALANCE_SHEET),
+    "financing_receivables": ("应收款项融资", StatementType.BALANCE_SHEET),
     "prepayments": ("预付款项", StatementType.BALANCE_SHEET),
     "other_receivables": ("其他应收款", StatementType.BALANCE_SHEET),
     "long_term_equity_investment": ("长期股权投资", StatementType.BALANCE_SHEET),
@@ -111,7 +112,7 @@ RAW_TO_STANDARD: dict[str, str] = {
     "净资产": "total_equity",
     "交易性金融资产": "trading_financial_assets",
     "应收票据": "notes_receivable",
-    "应收款项融资": "notes_receivable",
+    "应收款项融资": "financing_receivables",
     "预付款项": "prepayments",
     "预付账款": "prepayments",
     "其他应收款": "other_receivables",
@@ -207,6 +208,12 @@ UNIT_SCALE: dict[str, float] = {
     "千元": 1e3,
     "万元": 1e4,
     "亿元": 1e8,
+    # 美元（海外财报，与人民币单位对称；币种由 FinancialFact.currency 记录）
+    "美元": 1.0,
+    "千美元": 1e3,
+    "万美元": 1e4,
+    "百万美元": 1e6,
+    "亿美元": 1e8,
     # 英文
     "thousand": 1e3,
     "thousands": 1e3,
@@ -288,8 +295,13 @@ def map_item(raw_name: str) -> str:
 
 
 def is_mapped(raw_name: str) -> bool:
-    """科目是否成功映射到标准科目。"""
-    return normalize_name(raw_name).lower() in RAW_TO_STANDARD
+    """科目是否成功映射到标准科目。
+
+    复用 map_item 的完整匹配逻辑（精确 / 前缀剥离 / 紧凑匹配）。
+    map_item 命中会返回标准标识符（在 STANDARD_ITEMS 中），未命中返回归一化原文，
+    据此判断是否真正映射——否则「减：营业外支出」这类靠前缀剥离命中的科目会被误判为未映射。
+    """
+    return map_item(raw_name) in STANDARD_ITEMS
 
 
 def item_zh(standard_item: str) -> str:
