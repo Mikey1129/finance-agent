@@ -51,7 +51,7 @@ def test_map_item_strips_op_prefix():
 def test_map_item_strips_number_prefix():
     """附注表数字序号前缀应被剥离。"""
     assert map_item("2.应收款项融资") == "notes_receivable"
-    assert map_item("1.归属于母公司股东的净利润（净亏损以“-”号填列）") == "net_profit"
+    assert map_item("1.归属于母公司股东的净利润（净亏损以“-”号填列）") == "net_profit_parent"
 
 
 def test_map_item_strips_cn_number_prefix():

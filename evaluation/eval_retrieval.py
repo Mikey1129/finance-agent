@@ -54,7 +54,7 @@ BUILTIN_QUERIES: list[RetrievalQuery] = [
     RetrievalQuery("q01", "公牛集团2024年营业收入是多少？", ["168.31亿元"],
                    kind="fact", gold_item="revenue", gold_values=[16_830_541_086.13]),
     RetrievalQuery("q02", "2024年归母净利润是多少？同比增长多少？", ["42.72亿元"],
-                   kind="fact", gold_item="net_profit", gold_values=[4_272_204_565.03]),
+                   kind="fact", gold_item="net_profit_parent", gold_values=[4_272_204_565.03]),
     RetrievalQuery("q03", "2024年经营活动产生的现金流量净额是多少？", ["3,730,346,896.27"],
                    kind="fact", gold_item="operating_cash_flow", gold_values=[3_730_346_896.27]),
     RetrievalQuery("q04", "经营活动现金流量净额为什么下降？", ["预收货款下降"]),

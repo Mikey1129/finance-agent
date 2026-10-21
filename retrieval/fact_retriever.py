@@ -18,9 +18,9 @@ from finance.taxonomy import RAW_TO_STANDARD
 # 问句常用简称 -> 标准科目标识符（补齐 RAW_TO_STANDARD 未覆盖的口语简称）。
 # 只放「归母净利润」这类财报里用全称、问句里用简称的词；不重复 RAW_TO_STANDARD 已有的键。
 _QUERY_ALIASES: dict[str, str] = {
-    "归母净利润": "net_profit",
-    "归母净利": "net_profit",
-    "归母利润": "net_profit",
+    "归母净利润": "net_profit_parent",
+    "归母净利": "net_profit_parent",
+    "归母利润": "net_profit_parent",
 }
 
 

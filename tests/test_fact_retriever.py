@@ -24,8 +24,8 @@ def test_extract_item_maps_short_name():
 
 
 def test_extract_item_maps_alias():
-    # 口语简称「归母净利润」→ net_profit
-    assert extract_item("2024年归母净利润是多少？") == "net_profit"
+    # 口语简称「归母净利润」→ net_profit_parent（归属于母公司股东的净利润）
+    assert extract_item("2024年归母净利润是多少？") == "net_profit_parent"
 
 
 def test_extract_item_unknown_returns_none():
