@@ -44,7 +44,7 @@ class ParseResult:
 # ---------------------------------------------------------------------------
 _NAN_STRINGS = {"", "nan", "none", "null"}
 _NEG_FULLWIDTH = "（）"
-_UNIT_FALLBACK = ["万元", "亿元", "千元", "元"]  # 先长后短，避免「万元」被「元」截胡
+_UNIT_FALLBACK = ["百万美元", "亿美元", "万美元", "千美元", "万元", "亿元", "千元", "元"]  # 先长后短，避免「万元」被「元」截胡
 
 
 _FIRST_NUM = re.compile(r"[-+]?(?:\d[\d,]*\.?\d*|\.\d+)")
@@ -157,17 +157,40 @@ _NON_VALUE_HEADERS = {"附注", "备注", "注释", "附註", "notes", "note"}
 
 
 def _is_value_column(header) -> bool:
-    """判断列是否为数值/期间列（跳过附注/备注等文字列）。"""
+    """判断列是否为数值/期间列（跳过附注/备注等文字列）。
+
+    header 为 None（列不存在）才「保守当数值列」；header 存在但为空字符串
+    是招股书/上会稿表格里的空分隔列（竖线过度分割产生），不是数值列，
+    返回 False——否则每行会为每个空列生成一条空 fact，period 大面积错位。
+    """
     if header is None:
-        return True  # 无列头，保守当数值列
+        return True  # 无列头（列不存在），保守当数值列
     h = str(header).strip()
     if not h:
-        return True
-    if h.lower() in _NON_VALUE_HEADERS:
+        return False  # 空列头 → 非数值列
+    # 附注/备注列：招股书 text 策略下表头可能被污染成「附注 20」，用前缀匹配
+    if any(h.lower().startswith(k) for k in _NON_VALUE_HEADERS):
         return False
     if extract_period(h) is not None:
         return True
     return any(ch.isdigit() for ch in h)
+
+
+def _detect_item_col(headers: list) -> int:
+    """识别科目列索引：表头里第一个「非空且非数值/非附注」的文本列。
+
+    年报第一列即科目（「项目」）；招股书/上会稿表格第一列常为空字符串、
+    科目在第二列（['', '资产', '', '附注', ...]）。据此返回科目列索引，兜底 0。
+    """
+    for c, h in enumerate(headers):
+        if h is None:
+            continue
+        if not str(h).strip():
+            continue
+        if _is_value_column(h):
+            continue
+        return c
+    return 0
 
 
 def parse_tabular(
@@ -192,13 +215,19 @@ def parse_tabular(
     """
     facts: list[FinancialFact] = []
     n = len(headers)
+    item_col = _detect_item_col(headers)
     value_cols = [
-        c for c in range(1, n) if _is_value_column(headers[c] if c < len(headers) else None)
+        c
+        for c in range(n)
+        if c != item_col and _is_value_column(headers[c] if c < len(headers) else None)
     ]
+    # 值列从左到右 = 最近期到最远期（财报标准：期末余额在左、期初在右）。
+    # 表头年份被 pdfplumber text 策略拆乱时（「25年12月31日 20」），用此顺序倒推期间。
+    period_order = {c: i for i, c in enumerate(value_cols)}
     for r_idx, row in enumerate(rows):
         if not row:
             continue
-        raw_item = str(row[0]).strip()
+        raw_item = str(row[item_col]).strip() if item_col < len(row) else ""
         if not raw_item or raw_item in {"项目", "科目", "指标"}:
             continue
         std = map_item(raw_item)
@@ -210,6 +239,10 @@ def parse_tabular(
             std_value = convert_to_yuan(value, col_unit) if value is not None else None
 
             period = period_map.get(c_idx) if period_map else extract_period(headers[c_idx])
+            if period is None:
+                order = period_order.get(c_idx)
+                if order is not None:
+                    period = str(fiscal_year - order)
             # fact_id 必须纳入合并范围（consolidated=合并报表 / parent_only=母公司单体），
             # 否则同一 PDF 的「合并资产负债表」与「母公司资产负债表」同科目同位置会撞主键。
             # 行号用 r_idx + row_offset：跨页续表的行号会从 0 重新编号，必须叠加上一页
