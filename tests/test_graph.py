@@ -47,7 +47,7 @@ def test_graph_fact_query():
     g = AgentGraph(_store())
     out = g.run("2024 年营收多少", company_name="测试公司")
     assert out["status"] == "success"
-    assert "revenue=2000.0" in out["final_answer"]
+    assert "营业收入" in out["final_answer"] and "2,000.00" in out["final_answer"]
 
 
 def test_graph_metric_analysis():

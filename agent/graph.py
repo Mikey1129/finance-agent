@@ -38,6 +38,7 @@ from agent.state import AgentState, Intent
 from agent.tools import SourceRef, ToolResult, ToolStatus, build_tools
 from auth import AccessPolicy, AuditLog, User
 from finance.store import Store
+from finance.taxonomy import item_zh
 from domain import AnalysisRun, EvidenceChunk, FinancialFact, ToolCallRecord
 
 
@@ -218,8 +219,14 @@ class AgentGraph:
     @staticmethod
     def _summarize(r: ToolResult) -> str:
         if r.tool == "query_financial_fact":
-            rows = [f"{f.standard_item}={f.value} 元" for f in r.data if f.value is not None]
-            return "财务事实: " + "; ".join(rows) if rows else "财务事实: 无"
+            rows = []
+            for f in r.data:
+                if f.value is None:
+                    continue
+                zh = item_zh(f.standard_item)
+                year = f"（{f.fiscal_year}年）" if f.fiscal_year else ""
+                rows.append(f"{zh}{year} = {f.value:,.2f} 元")
+            return "；".join(rows) if rows else "未查到财务事实"
         if r.tool == "compute_metric":
             rows = [f"{m.name}={m.value:.4f}" for m in r.data.values() if m.computed]
             return "指标: " + "; ".join(rows) if rows else "指标: 无（数据不足）"

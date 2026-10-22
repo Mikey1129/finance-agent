@@ -220,6 +220,6 @@ def test_graph_simple_query_skips_llm():
     g = AgentGraph(_store(), chunks=_chunks(), llm_planner=llm, attribution_writer=writer)
     out = g.run("2024年营收多少", company_name="测试公司")
     assert out["status"] == "success"
-    assert "revenue=2000.0" in out["final_answer"]
+    assert "营业收入" in out["final_answer"]
     assert planner_calls == []  # SIMPLE 路径不调 llm_planner
     assert writer_calls == []   # 非归因不调 writer

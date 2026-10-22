@@ -45,7 +45,7 @@ def test_ask_returns_fact_value():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "success"
-    assert "total_assets=10000.0" in body["answer"]
+    assert "资产总计" in body["answer"] and "10,000.00" in body["answer"]
 
 
 def test_ask_records_run():
@@ -95,7 +95,7 @@ def test_ask_remembers_last_company():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "success"
-    assert "total_assets=10000.0" in body["answer"]
+    assert "资产总计" in body["answer"] and "10,000.00" in body["answer"]
 
 
 def test_overview_returns_metrics():
@@ -116,7 +116,7 @@ def test_export_run_markdown():
     export = client.get(f"/api/runs/{run_id}/export")
     assert export.status_code == 200
     assert "财务分析报告" in export.text
-    assert "total_assets" in export.text
+    assert "资产总计" in export.text
 
 
 def test_skills_api():
