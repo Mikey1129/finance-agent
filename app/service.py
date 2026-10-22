@@ -26,7 +26,7 @@ from agent.memory import SqliteMemoryStore
 from agent.skills import build_skills, list_skill_meta
 from auth import AccessPolicy, AuditLog, User
 from domain import FinancialFact, StatementType
-from finance.metrics import METRIC_DEFINITIONS, compute_metrics, compute_series
+from finance.metrics import compute_metrics, compute_series
 from finance.store import Store
 from ingestion.excel_parser import parse_csv, parse_excel
 from ingestion.vision_parser import build_vision_parser, parse_pdf_with_fallback
@@ -38,6 +38,12 @@ _STATEMENTS = (StatementType.BALANCE_SHEET, StatementType.INCOME_STATEMENT, Stat
 
 # 指标概览里做多期趋势的关键指标
 _OVERVIEW_TREND_CODES = ["gross_margin", "net_margin", "roe", "revenue_growth", "net_profit_growth"]
+
+# 结果按百分比显示的指标（其余 ratio 类如流动/速动比率、OCF/净利比按「倍数」显示）
+_PCT_CODES = {
+    "gross_margin", "net_margin", "roa", "roe",
+    "debt_to_asset_ratio", "revenue_growth", "net_profit_growth",
+}
 
 
 def _serialize(obj: Any) -> Any:
@@ -56,12 +62,11 @@ def _serialize(obj: Any) -> Any:
 
 
 def _metric_card(m) -> dict:
-    """把 MetricResult 转成前端友好的卡片（ratio/growth 显示百分比）。"""
-    kind = METRIC_DEFINITIONS[m.code].kind if m.code in METRIC_DEFINITIONS else ""
-    card = {"code": m.code, "name": m.name, "group": m.group, "is_signal": m.is_signal}
+    """把 MetricResult 转成前端友好的卡片（百分比口径的指标显示 %，其余显示倍数/数值）。"""
+    card = {"code": m.code, "name": m.name, "group": m.group, "is_signal": m.is_signal, "period": m.period}
     if m.computed:
         card["value"] = round(m.value, 6)
-        card["display"] = f"{m.value:.2%}" if kind in ("ratio", "growth") else f"{m.value:,.2f}"
+        card["display"] = f"{m.value:.2%}" if m.code in _PCT_CODES else f"{m.value:,.2f}"
     else:
         card["value"] = None
         card["display"] = m.status.value
@@ -289,10 +294,17 @@ class FinanceService:
             "revenue", "net_profit", "total_assets",
             "total_liabilities", "total_equity", "operating_cash_flow",
         }
-        fact_cards = [
-            {"item": f.standard_item, "value": f.value, "period": f.period}
-            for f in facts if f.standard_item in key_items and f.value is not None
-        ]
+        fact_cards = []
+        _seen: set[tuple[str, str]] = set()
+        for f in facts:
+            if (
+                f.standard_item in key_items
+                and f.value is not None
+                and f.consolidation_scope == "consolidated"
+                and (f.standard_item, f.period) not in _seen
+            ):
+                _seen.add((f.standard_item, f.period))
+                fact_cards.append({"item": f.standard_item, "value": f.value, "period": f.period})
         return {
             "company": company_name, "year": fiscal_year,
             "metrics": metric_cards, "trends": trends, "facts": fact_cards,
