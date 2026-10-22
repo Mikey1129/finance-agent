@@ -2,12 +2,24 @@ services:
   finance-agent:
     build: .
     image: finance-agent:latest
-    ports:
-      - "8000:8000"
+    expose: ["8000"]           # 不直接暴露公网，只给 Caddy 内部反代
     volumes:
       - ./storage:/app/storage
     environment:
       # 可选：视觉兜底（DashScope）与 LLM（DeepSeek）API key，留空则对应能力关闭
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - DASHSCOPE_VL_API_KEY=${DASHSCOPE_VL_API_KEY:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./caddy_data:/data
+    depends_on:
+      - finance-agent
     restart: unless-stopped

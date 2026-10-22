@@ -1,0 +1,4 @@
+# Caddy 自动申请并续期 HTTPS 证书（Let's Encrypt）
+financial-report-agent.site {
+    reverse_proxy finance-agent:8000
+}
