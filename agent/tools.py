@@ -119,6 +119,7 @@ def _facts_from_store(
 class QueryFinancialFactInput(BaseModel):
     company_name: str = Field(description="公司名称")
     fiscal_year: int | None = Field(default=None, description="财务年度，如 2025")
+    period: str | None = Field(default=None, description="期间标识，如 2025（多期财报精确到某一期）")
     standard_item: str | None = Field(default=None, description="标准科目标识符，如 revenue")
     statement_type: StatementType | None = Field(default=None, description="报表类型")
     scope: str | None = Field(default=None, description="合并范围 consolidated / parent_only")
@@ -143,6 +144,8 @@ class QueryFinancialFactTool(BaseTool):
             statement_type=args.statement_type.value if args.statement_type else None,
         )
         facts = [FinancialFact.model_validate(r) for r in rows]
+        if args.period:
+            facts = [f for f in facts if f.period and str(args.period) in str(f.period)]
         if args.scope:
             facts = [f for f in facts if f.consolidation_scope == args.scope]
         if not facts:

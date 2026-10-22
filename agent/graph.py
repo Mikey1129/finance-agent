@@ -12,6 +12,7 @@ LangGraph 负责流程控制（方案 5.8）；具体 Hook 在 execute 节点内
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Any, TypedDict
@@ -224,7 +225,11 @@ class AgentGraph:
                 if f.value is None:
                     continue
                 zh = item_zh(f.standard_item)
-                year = f"（{f.fiscal_year}年）" if f.fiscal_year else ""
+                year = ""
+                if f.period:
+                    m = re.search(r"(\d{4})", str(f.period))
+                    if m:
+                        year = f"（{m.group(1)}年）"
                 rows.append(f"{zh}{year} = {f.value:,.2f} 元")
             return "；".join(rows) if rows else "未查到财务事实"
         if r.tool == "compute_metric":

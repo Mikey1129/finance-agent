@@ -71,10 +71,11 @@ class Planner:
         fiscal_year = _year(periods[-1]) if periods else None
 
         if intent is Intent.FACT_QUERY:
+            step_period = periods[-1] if periods else None
             steps = [
                 PlanStep(
                     "query_financial_fact",
-                    {"company_name": company, "fiscal_year": fiscal_year, "standard_item": item},
+                    {"company_name": company, "fiscal_year": fiscal_year, "period": step_period, "standard_item": item},
                 )
                 for item in (standard_items or [])
             ]
