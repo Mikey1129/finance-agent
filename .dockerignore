@@ -12,6 +12,7 @@ venv
 
 # 运行时数据（用 volume 挂载，不进镜像）
 storage/
+caddy_data/
 *.duckdb
 *.db
 
