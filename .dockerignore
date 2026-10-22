@@ -19,5 +19,9 @@ caddy_data/
 # 模型（BGE 等大文件，默认关闭）
 models/
 
+# 前端（node_modules 巨大、dist 由多阶段构建产生，都不进 build context）
+frontend/node_modules
+frontend/dist
+
 # 文档与测试缓存
 *.pdf

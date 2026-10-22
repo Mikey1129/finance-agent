@@ -19,6 +19,7 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
 httpx>=0.27
+python-dotenv>=1.0
 
 # === 阶段5后：Reranker 重排（DashScope qwen3-rerank，复用 httpx 直连，无需 SDK；key 走 DASHSCOPE_API_KEY）===
 

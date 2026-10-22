@@ -1,7 +1,7 @@
 """app.main —— FastAPI 应用（阶段 4 产品界面）。
 
 接口：上传财报 / 提问 / 已入库公司 / 运行记录 / 健康检查。
-前端：app/static/index.html 极简单页（上传 + 对话 + 结果 + 引用跳转）。
+前端：Vue 3 + Vite 单页应用（frontend/ 构建产物 dist/，由 / 与 SPA fallback 服务）。
 
 启动：`uvicorn app.main:app --reload`（本地运行，方案 11「本地运行 → Docker」）。
 测试：`create_app(FinanceService(":memory:", ":memory:"))` 注入进程内服务，隔离状态。
@@ -20,8 +20,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.service import FinanceService
+from dotenv import load_dotenv
 
-_STATIC_DIR = Path(__file__).resolve().parent / "static"
+# 加载项目根目录 .env，本地 `uvicorn app.main:app` 直接跑时也能读到 DEEPSEEK_API_KEY 等
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+# 前端构建产物目录（Vite `npm run build` 输出 dist/）；未构建时 API 照常可用，仅静态页缺失
+_DIST_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
 class AskRequest(BaseModel):
@@ -166,11 +171,30 @@ def create_app(service: FinanceService | None = None) -> FastAPI:
         return result
 
     @application.get("/")
-    def index() -> FileResponse:
-        return FileResponse(_STATIC_DIR / "index.html")
+    def index() -> Response:
+        idx = _DIST_DIR / "index.html"
+        if not idx.is_file():
+            return Response(
+                "<h1>前端未构建</h1><p>请先在 frontend/ 目录运行 npm install && npm run build</p>",
+                media_type="text/html",
+            )
+        return FileResponse(idx)
 
-    # 静态资源（CSS/JS）挂载在最后，避免拦截 API 路由
-    application.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    # 静态资源（Vite 构建产物，base='/static/'）挂载在 /static，避免拦截 API 路由
+    if _DIST_DIR.is_dir():
+        application.mount("/static", StaticFiles(directory=str(_DIST_DIR)), name="static")
+
+    # SPA fallback（Vue Router history 模式）：刷新/直达子路由回退到 index.html。
+    # 必须最后注册，且跳过 /api 与 /static，否则会把 API 404 吞成 200 的 HTML。
+    @application.get("/{full_path:path}")
+    def spa_fallback(full_path: str) -> Response:
+        if full_path.startswith("api/") or full_path.startswith("static/"):
+            raise HTTPException(status_code=404, detail="not found")
+        idx = _DIST_DIR / "index.html"
+        if not idx.is_file():
+            raise HTTPException(status_code=404, detail="前端未构建")
+        return FileResponse(idx)
+
     return application
 
 

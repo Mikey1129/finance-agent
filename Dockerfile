@@ -1,6 +1,17 @@
 # 企业财报智能分析 Agent（方案 11「本地运行 → Docker」，阶段 5）
+# 多阶段构建：先 node 构建前端（Vue/Vite → dist），再 python 运行镜像拷贝 dist。
 # 构建：docker build -t finance-agent .
 # 运行：docker run -p 8000:8000 -v "$(pwd)/storage:/app/storage" finance-agent
+
+# ---- 前端构建阶段 ----
+FROM node:20-alpine AS frontend
+WORKDIR /fe
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# ---- 运行时阶段 ----
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -18,8 +29,9 @@ COPY requirements.txt .
 RUN grep -v -E "^sentence-transformers" requirements.txt > /tmp/requirements-core.txt \
     && pip install -r /tmp/requirements-core.txt
 
-# 代码
+# 代码 + 前端构建产物
 COPY . .
+COPY --from=frontend /fe/dist ./frontend/dist
 
 # 运行时数据目录（DuckDB / SQLite / 上传文件），由 volume 挂载
 RUN mkdir -p storage && chmod 777 storage
