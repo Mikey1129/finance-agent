@@ -119,7 +119,10 @@ def test_writer_non_json_returns_none():
     assert writer.write(_pack()) is None
 
 
-def test_writer_no_key_returns_none():
+def test_writer_no_key_returns_none(monkeypatch):
+    # 显式隔离环境变量：本地 .env 存在 DEEPSEEK_API_KEY 时（app.main load_dotenv 会加载），
+    # AttributionWriter(api_key=None) 会回退到 os.getenv 拿到真实 key 触发联网调用，导致测试不成立。
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     writer = AttributionWriter(api_key=None)
     assert writer.write(_pack()) is None
 
