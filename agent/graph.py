@@ -18,10 +18,12 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from config import rule_version as _cfg_rule_version
+from agent.attribution import AttributionWriter, render_report
 from agent.checkpoint import Checkpointer
 from agent.llm import LLMPlanner
 from agent.context import ContextPolicy, ContextResolver
-from agent.evidence import EvidenceAssembler
+from agent.evidence import EvidenceAssembler, EvidencePack
 from agent.hooks import (
     BudgetHook,
     HookManager,
@@ -30,10 +32,10 @@ from agent.hooks import (
     PromptInjectionHook,
     SourceIntegrityHook,
 )
-from agent.planner import Planner
+from agent.planner import ComplexityLevel, Planner, assess_complexity
 from agent.router import route
 from agent.state import AgentState, Intent
-from agent.tools import ToolResult, ToolStatus, build_tools
+from agent.tools import SourceRef, ToolResult, ToolStatus, build_tools
 from auth import AccessPolicy, AuditLog, User
 from finance.store import Store
 from domain import AnalysisRun, EvidenceChunk, FinancialFact, ToolCallRecord
@@ -56,6 +58,8 @@ class GraphState(TypedDict, total=False):
     clarification: str | None
     missing_evidence: list[str]
     contradictions: list[str]
+    evidence_pack: EvidencePack | None
+    answer_sources: list[SourceRef]
     status: str
     final_answer: str | None
 
@@ -69,8 +73,9 @@ class AgentGraph:
         chunks: list[EvidenceChunk] | None = None,
         checkpointer: Checkpointer | None = None,
         record_runs: bool = False,
-        rule_version: str = "deterministic-v1",
+        rule_version: str | None = None,
         llm_planner: LLMPlanner | None = None,
+        attribution_writer: AttributionWriter | None = None,
         access_policy: AccessPolicy | None = None,
         audit_log: AuditLog | None = None,
     ):
@@ -78,8 +83,9 @@ class AgentGraph:
         self.chunks = chunks or []
         self.checkpointer = checkpointer
         self.record_runs = record_runs
-        self.rule_version = rule_version
+        self.rule_version = rule_version or _cfg_rule_version()
         self.llm_planner = llm_planner
+        self.attribution_writer = attribution_writer
         self.access_policy = access_policy
         self.audit_log = audit_log
         self.registry = build_tools(store, self.chunks)
@@ -130,8 +136,8 @@ class AgentGraph:
 
     def _plan(self, state: GraphState) -> dict:
         intent = Intent(state["intent"]) if state.get("intent") else None
-        # 深度归因（路径 C）启用 LLM Function Calling 动态规划；其余走规则 Planner。
-        if self.llm_planner and intent is Intent.ATTRIBUTION:
+        # 复杂度门控：仅深度归因（COMPLEX）且注入 LLM 时走动态规划；其余/失败走规则 Planner。
+        if self.llm_planner and assess_complexity(intent, state["user_query"]) is ComplexityLevel.COMPLEX:
             calls = self.llm_planner.plan(
                 state["user_query"],
                 self.registry.schemas(),
@@ -176,6 +182,7 @@ class AgentGraph:
             facts=facts, metrics=metrics, chunks=chunks,
         )
         return {
+            "evidence_pack": pack,
             "missing_evidence": pack.missing_evidence,
             "contradictions": pack.contradictions,
         }
@@ -183,6 +190,24 @@ class AgentGraph:
     def _answer(self, state: GraphState) -> dict:
         if state.get("needs_clarification"):
             return {"final_answer": state.get("clarification"), "status": "need_clarification"}
+
+        # 深度归因走 LLM 结论合成（带证据等级）；未注入/失败降级模板拼接。
+        intent = Intent(state["intent"]) if state.get("intent") else None
+        pack = state.get("evidence_pack")
+        if (
+            self.attribution_writer is not None
+            and intent is Intent.ATTRIBUTION
+            and pack is not None
+        ):
+            draft = self.attribution_writer.write(pack, self.context_policy)
+            if draft is not None:
+                report, sources = render_report(draft)
+                return {
+                    "final_answer": report,
+                    "answer_sources": sources,
+                    "status": "success",
+                }
+
         parts = [self._summarize(r) for r in state.get("tool_results", []) if r.status is ToolStatus.SUCCESS]
         if state.get("missing_evidence"):
             parts.append("⚠ 缺失证据: " + "；".join(state["missing_evidence"]))

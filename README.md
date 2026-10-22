@@ -14,7 +14,7 @@ FinRAG（财报数值推理 RAG）的升级版 —— 从「RAG 玩具」到「�
 | 1 数据基础 | ✅ 基本完成 | ReportDoc/FinancialFact/Provenance + Excel/CSV + 原生 PDF + 结构切块 + DuckDB + 基础校验 |
 | 2 分析能力 | ✅ 基本完成 | 科目映射 + 指标注册中心（16 指标）+ 多期比较 + 工具注册/Schema |
 | 3 Agent 闭环 | ✅ 完成 | LangGraph 编排 + Intent Router + AgentState + Checkpointer + Function Calling + BM25 召回 + 证据组装 |
-| 4 产品界面 | ✅ 基本完成 | 上传/对话/指标卡片/趋势/技能/导出/多轮续接 + Skill + 长期记忆 + 评测 D |
+| 4 产品界面 | ✅ 基本完成 | 上传/对话/指标卡片/趋势/技能/导出/多轮续接 + Skill + 长期记忆 + 评测 D + LLM 归因结论合成 |
 | 5 企业增强 | ✅ 基本完成 | 权限/审计 + 多公司比较 + 缓存/上下文 + 复杂 PDF 视觉 + Docker |
 
 ## 目录结构
@@ -26,12 +26,12 @@ finance-agent/
 ├── ingestion/     # Excel/CSV、PDF 解析
 ├── finance/       # DuckDB 存储、Taxonomy 科目映射、Metrics、Validation
 ├── retrieval/     # 结构切块、BM25/向量检索
-├── agent/         # state、graph、router、planner、tools、context、memory、hooks
-├── reporting/     # 分析报告
+├── agent/         # LangGraph 编排、工具、上下文、记忆、归因结论合成
+├── reporting/     # 带来源的分析报告渲染（report.py）
 ├── evaluation/    # 数据/计算/检索/端到端评测
 ├── tests/         # pytest 单测
 ├── storage/       # 原始文件与本地数据（git 忽略）
-└── config/        # 配置与规则版本
+└── config/        # 集中配置（settings.py：模型/端点/规则版本/开关）
 ```
 
 ## 阶段 1 成果（数据基础）
@@ -72,9 +72,9 @@ finance-agent/
 
 > 模型下载（可选）：`embedder=None` 时无需装 `sentence-transformers`。启用 BGE 前，先下载模型到 `models/bge-small-zh-v1.5`（HF 镜像或 modelscope），代码优先加载本地路径。
 
-**Reranker 候选重排（DashScope qwen3-rerank，默认开启）**：`retrieval/reranker.py` 提供 `Reranker` 抽象 + `DashScopeReranker`（httpx 直连 `qwen3-rerank`，key 从 `DASHSCOPE_API_KEY` 读，缺 key / 请求失败 / 空结果降级为召回原顺序）+ `build_reranker()`（有 key 即自动启用）。`Retriever` 先召回候选池（`top_k×4`）再交给 reranker 对 `(query, doc)` 精细重排，纠正「语义沾边但非本科目」挤进 top-k 的问题。
+**Reranker 候选重排（DashScope qwen3-rerank，默认关闭）**：`retrieval/reranker.py` 提供 `Reranker` 抽象 + `DashScopeReranker`（httpx 直连 `qwen3-rerank`，key 从 `DASHSCOPE_API_KEY` 读，缺 key / 请求失败 / 空结果降级为召回原顺序）+ `build_reranker()`（显式开关）。`Retriever` 先召回候选池（`top_k×4`）再交给 reranker 对 `(query, doc)` 精细重排，纠正「语义沾边但非本科目」挤进 top-k 的问题。
 
-**评测结论（公牛 2024 年报，606 chunk，k=5，真实 qwen3-rerank）**：BM25 基线 Recall@5=0.632 / nDCG@5=0.534 / MRR=0.667；**BM25+qwen3-rerank Recall@5=0.740 / nDCG@5=0.663 / MRR=0.703**——3 查询改善（营收 0.25→0.50、归母净利润 0.67→1.00、货币资金 0.50→1.00）、0 劣化，正中 BM25 精确数值查询的弱项。故**默认开启**：`build_reranker()` 检测到 `DASHSCOPE_API_KEY` 即启用，无 key 自动降级纯 BM25（行为与接入前一致）。代价：每查询延迟 8ms→~526ms（一次 API 调用）。`rank_fn` 可注入，单测不触网。
+**评测结论演进**：早期在公牛 2024 年报 606 chunk 的 10 个数值型查询上，BM25+qwen3-rerank 较纯 BM25 Recall@5 0.632→0.740 有提升；后扩到 **51 道定性 query**（公牛 32 + 长鑫 19，`evaluation/reranker_diagnosis.py` 细粒度诊断）：qwen3-rerank 对 Recall@5/MRR **零增益**、仅把延迟从 ~14ms 拖到 ~930ms（reranker 只能在 BM25 候选池内部重排，救不了漏召回候选池的 gold）。故**默认关闭**：`build_reranker()` 仅当 `ENABLE_RERANKER=1/true/on` 才启用，否则纯 BM25（行为与关闭一致）。`rank_fn` 可注入，单测不触网。
 
 **评测 C 架构纠偏（数值查询走结构化 facts，Recall 0.740→1.000）**：上述 0.740 是「全文 chunk 检索」测**数值型查询**（存货/营收/现金流「是多少」）的结果——但这类问句不含答案数字，BM25 词法只能靠高频科目词匹配，命中率有天花板（实测扩候选池 / 表格行 chunk 化 / 去数字改写均不升反降）。数值查询的答案本在结构化 `financial_facts` 里（方案第 6 章「财务事实由数据层提供」）。故新增 `retrieval/fact_retriever.py`：`extract_item` 把问句映射到标准科目（长全称优先 + 口语简称如「归母净利润」），`FactRetriever` 按公司/年度/合并范围精确匹配 facts；评测集 `RetrievalQuery` 增加 `kind`/`gold_item`/`gold_values` 区分「数值型（fact）vs 定性型（chunk）」，`eval_retrieval_mixed` 分路径评测。**综合 Recall@5=1.000**（6 个数值查询走 facts 全命中，4 个定性查询走 chunk 保持 1.0），是「agent 用结构化数据回答数值问题」的真实能力，非文本检索的硬凑。
 
@@ -87,6 +87,8 @@ finance-agent/
 **长期记忆**：`agent/memory.py` `SqliteMemoryStore` 持久化（跨会话），问答把「最近分析公司」作兜底续接；界面暴露记忆增删查 API。
 
 **评测 D（系统安全）**：`evaluation/eval_security.py` 六类场景（恶意文档/提示词注入/参数越界/预算循环终止/错误路由/记忆污染）端到端验证安全机制；顺带修复 graph/skills 的 Hook 列表漏接 `PromptInjectionHook` 的缺口。
+
+**LLM 决策层与归因结论合成（阶段 4 补全）**：`agent/llm.py` `LLMPlanner` 用 DeepSeek Function Calling 做动态规划（数字仍由数据/计算层产生，LLM 只「决定调用」）；`agent/attribution.py` `AttributionWriter` 把 EvidencePack 交给 LLM 生成带证据等级的归因结论——每条原因标「明确披露 / 证据推断 / 待证假设」三级，数字只引用证据已有值、相关性≠因果、证据不足明确标注（方案「结论有证据」落地）。**复杂度门控**：`agent/planner.py` `assess_complexity` 仅深度归因（COMPLEX）才启用 LLM 规划 + 结论合成，简单查数/算指标/澄清走规则零 LLM（方案 5.2「LLM 决策边界」）。缺 `DEEPSEEK_API_KEY` / 请求失败 / JSON 非法一律降级（规则 Planner + 模板拼接），绝不崩溃。由 `evaluation/eval_attribution.py` + `tests/test_attribution.py` 锁住防回归。
 
 ## 阶段 5 成果（企业增强）
 
@@ -106,10 +108,24 @@ finance-agent/
 
 **Docker 容器化**：`Dockerfile`（python:3.11-slim，排除可选重依赖 sentence-transformers/torch 减小镜像）+ `.dockerignore`（排除 storage/模型/缓存）+ `docker-compose.yml`（端口 8000 + storage volume 挂载 + 可选 API key 环境变量）。
 
+## 配置（环境变量）
+
+| 变量 | 作用 | 默认 |
+|---|---|---|
+| `LLM_MODEL` | LLM 决策层 + 归因合成的模型名 | `deepseek-v4-pro` |
+| `LLM_BASE_URL` | DeepSeek OpenAI 兼容端点 | `https://api.deepseek.com/v1` |
+| `RULE_VERSION` | 写入 AnalysisRun 的规则版本（可追溯） | `deterministic-v1` |
+| `ENABLE_RERANKER` | Reranker 重排开关（默认关，见阶段 4） | 关 |
+| `DEEPSEEK_API_KEY` | 启用 LLM 规划 + 归因结论合成（缺则降级） | 无 |
+| `DASHSCOPE_API_KEY` | qwen3-rerank 重排（需同时开 `ENABLE_RERANKER`） | 无 |
+| `DASHSCOPE_VL_API_KEY` | 扫描件视觉兜底（Qwen3-VL） | 无 |
+
+配置项集中定义在 `config/settings.py`，均可环境变量覆盖（惰性读取，改环境变量无需改代码）。
+
 ## 快速开始
 
 ```bash
 pip install -r requirements.txt
-pytest            # 运行测试（217 个用例）
+pytest            # 运行测试（256 个用例）
 uvicorn app.main:app --reload   # 启动界面 http://127.0.0.1:8000
 ```

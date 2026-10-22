@@ -16,6 +16,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from config import llm_base_url, llm_model
+
 _SYSTEM = (
     "你是企业财报分析 Agent 的任务规划器。根据用户问题和可用工具，决定调用哪些工具"
     "及其参数。必须调用工具完成规划，不要用文字直接回答财务问题；财务数字必须由工具"
@@ -71,12 +73,12 @@ class LLMPlanner:
     def __init__(
         self,
         invoke: Callable[..., list[Any]] | None = None,
-        model: str = "deepseek-v4-pro",
-        base_url: str = "https://api.deepseek.com/v1",
+        model: str | None = None,
+        base_url: str | None = None,
         api_key: str | None = None,
     ):
-        self.model = model
-        self.base_url = base_url
+        self.model = model or llm_model()
+        self.base_url = base_url or llm_base_url()
         self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
         self._invoke = invoke or self._default_invoke
 
@@ -122,3 +124,14 @@ class LLMPlanner:
             user = f"分析对象：{company_name}；期间：{periods or []}。问题：{query}"
         raw = self._invoke(_SYSTEM, user, _to_openai_tools(tool_schemas))
         return parse_tool_calls(raw)
+
+
+def build_llm_planner() -> LLMPlanner | None:
+    """有 DEEPSEEK_API_KEY 时返回可用的 LLMPlanner，否则 None（降级规则 Planner）。
+
+    生产环境（app/service.py）据此注入：无 key 时复杂度门控自动落到规则规划，行为
+    与未接入 LLM 前一致。
+    """
+    if os.getenv("DEEPSEEK_API_KEY"):
+        return LLMPlanner()
+    return None

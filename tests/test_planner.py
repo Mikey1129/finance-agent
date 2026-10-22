@@ -1,6 +1,6 @@
 """agent.planner 任务规划测试：三条路径的步骤序列。"""
 
-from agent.planner import Planner
+from agent.planner import ComplexityLevel, Planner, assess_complexity
 from agent.state import Intent
 
 
@@ -47,3 +47,13 @@ def test_attribution_full_pipeline():
 
 def test_clarify_no_plan():
     assert Planner().plan(Intent.CLARIFY, query="你好") == []
+
+
+# -- 复杂度门控 --------------------------------------------------------------
+def test_assess_complexity_attribution_is_complex():
+    assert assess_complexity(Intent.ATTRIBUTION) is ComplexityLevel.COMPLEX
+
+
+def test_assess_complexity_simple_intents_are_simple():
+    for intent in (Intent.FACT_QUERY, Intent.METRIC_ANALYSIS, Intent.CLARIFY, None):
+        assert assess_complexity(intent) is ComplexityLevel.SIMPLE

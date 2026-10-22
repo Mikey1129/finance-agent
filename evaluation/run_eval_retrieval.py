@@ -24,8 +24,9 @@ from evaluation.qualitative_queries import (
 )
 from ingestion.pdf_parser import parse_pdf
 from retrieval.chunker import chunk_pages
+from retrieval.embedding import BGEEmbedder
 from retrieval.retriever import Retriever
-from retrieval.reranker import build_reranker
+from retrieval.reranker import DashScopeReranker
 
 
 # 每个公司对应的 PDF 路径、解析参数、切块 report_id
@@ -51,10 +52,10 @@ def build_chunks(cfg: dict):
     return chunk_pages(parsed.pages, cfg["company"], cfg["year"], cfg["report_id"])
 
 
-def eval_company(cfg: dict, reranker, k: int = 5) -> dict:
+def eval_company(cfg: dict, embedder, reranker, k: int = 5) -> dict:
     company = cfg["company"]
     chunks = build_chunks(cfg)
-    retriever = Retriever(chunks, reranker=reranker)
+    retriever = Retriever(chunks, embedder=embedder, reranker=reranker)
     rows = []
 
     for q in cfg["queries"]:
@@ -88,6 +89,7 @@ def _avg(rows: list[dict], key: str) -> float:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--company", choices=["bull", "changxin", "all"], default="all")
+    ap.add_argument("--embedder", action="store_true", help="接入 BGE 语义召回（本地模型，默认纯 BM25）")
     ap.add_argument("--reranker", action="store_true", help="接入 qwen3-rerank（默认纯 BM25）")
     ap.add_argument("-k", type=int, default=5)
     args = ap.parse_args()
@@ -98,12 +100,14 @@ def main() -> None:
         "all": ["公牛集团", "长鑫科技"],
     }[args.company]
 
-    reranker = build_reranker() if args.reranker else None
+    # 评测脚本显式构造 reranker（不走生产开关 build_reranker），--reranker 即强制启用
+    reranker = DashScopeReranker() if args.reranker else None
+    embedder = BGEEmbedder() if args.embedder else None
 
     all_rows: list[dict] = []
     for name in companies:
         cfg = dict(COMPANY_CFG[name], company=name)
-        res = eval_company(cfg, reranker, k=args.k)
+        res = eval_company(cfg, embedder, reranker, k=args.k)
         rows = res["rows"]
         all_rows.extend(rows)
         print(f"\n{'='*72}")

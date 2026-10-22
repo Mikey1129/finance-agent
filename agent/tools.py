@@ -300,7 +300,7 @@ class RetrieveEvidenceTool(BaseTool):
     def __init__(self, store: Store, chunks: list[EvidenceChunk] | None = None, reranker=None):
         super().__init__(store)
         self.chunks = chunks or []
-        # 默认自动感知：有 DASHSCOPE_API_KEY 启用 qwen3-rerank（数据证明提升），否则纯 BM25
+        # 显式开关（ENABLE_RERANKER=1）才启用重排；默认纯 BM25
         if reranker is None:
             reranker = build_reranker()
         self._retriever = Retriever(self.chunks, reranker=reranker)

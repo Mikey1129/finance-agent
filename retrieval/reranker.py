@@ -19,6 +19,8 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 
+from config import enable_reranker
+
 # DashScope 文本排序原生接口（非 compatible-mode，后者只覆盖 LLM/Embedding）。
 _URL = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
 
@@ -89,12 +91,13 @@ class DashScopeReranker(Reranker):
 
 
 def build_reranker() -> Reranker | None:
-    """有 DASHSCOPE_API_KEY 时返回可用的 DashScopeReranker，否则 None（降级纯 BM25）。
+    """显式开关：仅当 ENABLE_RERANKER=1/true/on 时才返回 DashScopeReranker，否则 None（纯 BM25）。
 
-    评测结论（公牛集团 2024 年报，606 chunk，k=5）：BM25 + qwen3-rerank 较纯 BM25
-    Recall@5 0.632→0.740、nDCG@5 0.534→0.663，有数据证明提升，故工具层默认启用；
-    缺 key / 请求失败时自动降级为纯 BM25，行为与接入前一致。
+    评测结论（公牛 32 + 长鑫 19 共 51 道定性 query，k=5）：qwen3-rerank 对 Recall@5/MRR
+    零增益、仅把延迟从 ~14ms 拖到 ~930ms，故默认关闭。保留此开关供未来换模型 / 输入
+    文本长度 / 候选数量后重新评估（见 evaluation/reranker_diagnosis.py）。缺 key / 请求
+    失败仍自动降级为纯 BM25，行为与关闭一致。
     """
-    if os.getenv("DASHSCOPE_API_KEY"):
+    if enable_reranker():
         return DashScopeReranker()
     return None

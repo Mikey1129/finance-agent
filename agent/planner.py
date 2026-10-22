@@ -14,8 +14,28 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from enum import Enum
 
 from agent.state import Intent
+
+
+class ComplexityLevel(str, Enum):
+    """任务复杂度（方案 5.2「LLM 决策边界」的显式门控）。"""
+
+    SIMPLE = "simple"    # 规则 Planner，零 LLM
+    COMPLEX = "complex"  # 走 llm_planner 动态规划（+ LLM 结论合成）
+
+
+def assess_complexity(intent: Intent | None, query: str = "") -> ComplexityLevel:
+    """按任务复杂度决定是否启用 LLM：简单问题（查数值/算指标/澄清）走规则零 LLM，
+    深度归因（需动态检索 + 多工具 + 组织结论）才判复杂、走 LLM。
+
+    当前复杂度 = 意图级。未来可在 ATTRIBUTION 内部按「多指标联动/多期间/需多步检索」
+    再细分为二级复杂度（留此扩展点）。
+    """
+    if intent is Intent.ATTRIBUTION:
+        return ComplexityLevel.COMPLEX
+    return ComplexityLevel.SIMPLE
 
 
 @dataclass

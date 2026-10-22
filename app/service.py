@@ -19,7 +19,9 @@ from typing import Any
 from pydantic import BaseModel
 
 from agent import AgentGraph
+from agent.attribution import build_attribution_writer
 from agent.checkpoint import Checkpointer
+from agent.llm import build_llm_planner
 from agent.memory import SqliteMemoryStore
 from agent.skills import build_skills, list_skill_meta
 from auth import AccessPolicy, AuditLog, User
@@ -29,6 +31,7 @@ from finance.store import Store
 from ingestion.excel_parser import parse_csv, parse_excel
 from ingestion.vision_parser import build_vision_parser, parse_pdf_with_fallback
 from retrieval.chunker import chunk_pages
+from reporting import render_analysis_report
 
 # PDF 三大报表都要入库（parse_pdf 每次只提取一个目标报表，故循环三次）
 _STATEMENTS = (StatementType.BALANCE_SHEET, StatementType.INCOME_STATEMENT, StatementType.CASH_FLOW)
@@ -233,6 +236,8 @@ class FinanceService:
                 self._chunks,
                 checkpointer=self.checkpointer,
                 record_runs=True,
+                llm_planner=build_llm_planner(),
+                attribution_writer=build_attribution_writer(),
                 access_policy=self.access_policy,
                 audit_log=self.audit_log,
             )
@@ -343,24 +348,7 @@ class FinanceService:
         run = self.store.get_analysis_run(run_id)
         if not run:
             return None
-        lines = [
-            "# 财务分析报告", "",
-            f"- 问题：{run.get('user_query')}",
-            f"- 公司：{run.get('company_name') or '—'}",
-            f"- 期间：{', '.join(run.get('periods', [])) or '—'}",
-            f"- 意图：{run.get('intent') or '—'}",
-            "", "## 结论", "",
-            run.get("final_answer") or "（无）", "",
-            "## 工具调用", "",
-        ]
-        for tc in run.get("tool_calls", []):
-            src = ", ".join(tc.get("source_refs", []))
-            line = f"- `{tc.get('tool')}`（{tc.get('status')}）：{tc.get('summary')}"
-            lines.append(line + (f" [{src}]" if src else ""))
-        if run.get("validation_summary"):
-            lines += ["", "## 校验", ""]
-            lines += [f"- {v}" for v in run["validation_summary"]]
-        return "\n".join(lines)
+        return render_analysis_report(run)
 
     def list_skills(self) -> list[dict]:
         return list_skill_meta()
