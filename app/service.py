@@ -246,10 +246,7 @@ class FinanceService:
     # -- 查询 ---------------------------------------------------------------
     def companies(self) -> list[str]:
         """已入库的公司名（去重，供前端下拉与意图消歧）。"""
-        rows = self.store.conn.execute(
-            "SELECT DISTINCT company_name FROM financial_facts ORDER BY company_name"
-        ).fetchall()
-        return [r[0] for r in rows if r[0]]
+        return self.store.list_companies()
 
     def runs(self, limit: int = 50) -> list[dict]:
         """历史运行记录（AnalysisRun，可回放审计）。"""

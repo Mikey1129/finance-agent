@@ -126,6 +126,10 @@ class SqliteMemoryStore(MemoryStore):
     def __init__(self, path: str = "storage/memory.db"):
         self.path = path
         self.conn = sqlite3.connect(path, check_same_thread=False)
+        # 多 worker 并发：WAL 允许一写多读；busy_timeout 锁冲突时等待而非立即报错
+        if path != ":memory:":
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(self._SCHEMA)
 
     def _now(self) -> str:
