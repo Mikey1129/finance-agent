@@ -130,33 +130,120 @@ class AgentGraph:
             "needs_clarification": rc.needs_clarification,
             "clarification": rc.clarification,
         }
-        if rc.needs_clarification:
+
+        # LLM 兜底：规则未命中（CLARIFY）但已确定公司时，交给 LLM 理解并规划工具，
+        # 让规则枚举不到的口语问法也能落到正确工具上（数字仍由工具/数据层产生）。
+        if rc.intent is Intent.CLARIFY and rc.company_name and self.llm_planner:
+            fallback = self._llm_fallback(query, rc.company_name, rc.periods)
+            if fallback is not None:
+                result["intent"] = fallback["intent"]
+                result["plan"] = fallback["plan"]
+                result["periods"] = fallback["periods"]
+                result["needs_clarification"] = False
+                result["clarification"] = None
+
+        if result["needs_clarification"]:
             # CLARIFY 短路到 END，不经过 answer 节点，此处直接给出状态与答案
             result["status"] = "need_clarification"
-            result["final_answer"] = rc.clarification
+            result["final_answer"] = result["clarification"]
         return result
 
+    def _latest_period(self, company_name: str) -> str | None:
+        """该公司入库的最新期间（按 period 字典序取最大，与 metrics._sorted_periods 一致），无数据返回 None。"""
+        rows = self.store.query_facts(company_name=company_name)
+        periods = sorted({r["period"] for r in rows if r.get("period")})
+        return periods[-1] if periods else None
+
+    def _llm_fallback(self, query: str, company_name: str, periods: list[str]) -> dict | None:
+        """规则未命中（CLARIFY）但已确定公司时，用 LLM 理解并规划工具调用。
+
+        返回 {intent, plan, periods}；LLM 未给出可用工具调用时返回 None（维持规则澄清）。
+        数字仍由工具/数据层产生，LLM 只决定「调用什么工具、传什么参数」。
+        """
+        if not self.llm_planner:
+            return None
+        try:
+            calls = self.llm_planner.plan(
+                query, self.registry.schemas(), company_name=company_name, periods=periods
+            )
+        except Exception:
+            return None
+        if not calls:
+            return None
+
+        # 期间兜底：无期间时用最新可用期间，并把年份注入需要 fiscal_year 的工具
+        resolved_periods = list(periods or [])
+        if not resolved_periods:
+            latest = self._latest_period(company_name)
+            if latest:
+                resolved_periods = [latest]
+        fiscal_year = None
+        if resolved_periods:
+            m = re.search(r"(\d{4})", str(resolved_periods[-1]))
+            fiscal_year = int(m.group(1)) if m else None
+
+        plan: list[dict] = []
+        tools: set[str] = set()
+        for c in calls:
+            tool = self.registry.get(c.tool)
+            if tool is None:
+                continue  # 未知工具直接丢弃（execute 也会 fail）
+            args = dict(c.args or {})
+            fields = tool.input_schema.model_fields
+            # 强制以规则消歧出的公司为准（LLM 可能填错/漏填公司名）
+            if "company_name" in fields:
+                args["company_name"] = company_name
+            # 缺年份时用最新可用年份兜底（compute_metric 等需要 fiscal_year）
+            if "fiscal_year" in fields and args.get("fiscal_year") is None and fiscal_year is not None:
+                args["fiscal_year"] = fiscal_year
+            plan.append({"tool": c.tool, "args": args})
+            tools.add(c.tool)
+
+        if not plan:
+            return None
+
+        # 从工具名推断意图（供 evidence 组装与 answer 分支）
+        if tools & {"retrieve_evidence", "validate_result"}:
+            intent = Intent.ATTRIBUTION
+        elif tools & {"compute_metric", "compare_periods", "compare_companies"}:
+            intent = Intent.METRIC_ANALYSIS
+        else:
+            intent = Intent.FACT_QUERY
+
+        return {"intent": intent.value, "plan": plan, "periods": resolved_periods}
+
     def _plan(self, state: GraphState) -> dict:
+        # LLM 兜底已在 resolve 阶段产出 plan，直接沿用，跳过规则/LLM 规划
+        if state.get("plan"):
+            return {"periods": state.get("periods", [])}
+
         intent = Intent(state["intent"]) if state.get("intent") else None
+        company = state.get("company_name")
+        periods = list(state.get("periods", []) or [])
+        # 未指定期间时默认用该公司最新可用期间（否则 compute_metric 收到空年度会失败）
+        if not periods and company:
+            latest = self._latest_period(company)
+            if latest:
+                periods = [latest]
         # 复杂度门控：仅深度归因（COMPLEX）且注入 LLM 时走动态规划；其余/失败走规则 Planner。
         if self.llm_planner and assess_complexity(intent, state["user_query"]) is ComplexityLevel.COMPLEX:
             calls = self.llm_planner.plan(
                 state["user_query"],
                 self.registry.schemas(),
-                company_name=state.get("company_name"),
-                periods=state.get("periods", []),
+                company_name=company,
+                periods=periods,
             )
             if calls:
-                return {"plan": [{"tool": c.tool, "args": c.args} for c in calls]}
+                return {"plan": [{"tool": c.tool, "args": c.args} for c in calls], "periods": periods}
         steps = self.planner.plan(
             intent,
             query=state["user_query"],
-            company_name=state.get("company_name"),
-            periods=state.get("periods", []),
+            company_name=company,
+            periods=periods,
             metric_codes=state.get("metric_codes", []),
             standard_items=state.get("standard_items", []),
         )
-        return {"plan": [{"tool": s.tool, "args": s.args} for s in steps]}
+        return {"plan": [{"tool": s.tool, "args": s.args} for s in steps], "periods": periods}
 
     def _execute(self, state: GraphState) -> dict:
         results: list[ToolResult] = []
@@ -219,6 +306,9 @@ class AgentGraph:
 
     @staticmethod
     def _summarize(r: ToolResult) -> str:
+        # 工具失败（data=None）在 _build_run 里也会被总结，统一兜底，避免 None 解引用崩溃
+        if r.data is None:
+            return f"{r.tool}: {r.status.value}"
         if r.tool == "query_financial_fact":
             rows = []
             for f in r.data:

@@ -57,6 +57,24 @@ def test_route_roe_alias():
     assert "roe" in r.metric_codes
 
 
+def test_route_profitability_phrase():
+    # 「收益很高吗」这类口语问法 → 盈利能力指标组，而非 CLARIFY
+    r = route("公牛集团的收益很高吗", known_companies=["公牛集团"])
+    assert r.intent is Intent.METRIC_ANALYSIS
+    assert r.metric_codes == ["gross_margin", "net_margin", "roa", "roe"]
+    assert not r.needs_clarification
+
+
+def test_route_profitability_phrase_does_not_hijack_exact_item():
+    # 精确科目（净利润/其他收益）仍走 FACT_QUERY，不被盈利能力口语词误伤
+    r = route("公牛集团 2024 年净利润是多少", known_companies=["公牛集团"])
+    assert r.intent is Intent.FACT_QUERY
+    assert "net_profit" in r.standard_items
+    r2 = route("公牛集团其他收益是多少", known_companies=["公牛集团"])
+    assert r2.intent is Intent.FACT_QUERY
+    assert "other_income" in r2.standard_items
+
+
 # ---------------------------------------------------------------------------
 # AgentState
 # ---------------------------------------------------------------------------

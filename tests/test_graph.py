@@ -57,6 +57,15 @@ def test_graph_metric_analysis():
     assert "毛利率" in out["final_answer"]
 
 
+def test_graph_metric_analysis_without_period_uses_latest():
+    # 无年份的指标问法（如「收益很高吗」）应自动用最新期间，而非崩溃/澄清
+    g = AgentGraph(_store())
+    out = g.run("收益很高吗", company_name="测试公司")
+    assert out["status"] == "success"
+    assert out["periods"] == ["2024"]  # 最新期间
+    assert "净利率" in out["final_answer"]
+
+
 def test_graph_clarify_short_circuits():
     g = AgentGraph(_store())
     out = g.run("你好")

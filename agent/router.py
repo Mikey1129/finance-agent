@@ -17,7 +17,7 @@ import re
 from pydantic import BaseModel, Field
 
 from agent.state import Intent
-from finance.metrics import METRIC_DEFINITIONS
+from finance.metrics import GROUPS, METRIC_DEFINITIONS
 from finance.taxonomy import RAW_TO_STANDARD
 
 # 归因词（路径 C）：优先级最高，即使同时含指标词也归因
@@ -28,6 +28,10 @@ _TREND_WORDS = ("趋势", "走势", "同比", "环比", "变化", "增长", "下
 
 # 数值查询词（路径 A 的弱信号）
 _FACT_WORDS = ("多少", "是多少", "金额", "数值", "几多", "多少元")
+
+# 盈利能力口语词（「收益高吗/盈利怎么样/赚钱多吗/利润如何」→ 盈利能力指标组兜底）
+# 仅在未命中具体科目/指标时生效，避免误伤「净利润/其他收益」等精确科目查询。
+_PROFITABILITY_WORDS = ("收益", "利润", "盈利", "赚钱")
 
 # 指标英文别名（name 已是中文，补少量英文/缩写）
 _METRIC_ALIASES = {"ROE": "roe", "roe": "roe", "ROA": "roa", "roa": "roa"}
@@ -112,6 +116,11 @@ def route(query: str, known_companies: list[str] | None = None) -> RouterResult:
     metric_codes = _match_metrics(query)
     standard_items = _match_items(query)
     company = _extract_company(query, known_companies)
+
+    # 盈利能力口语兜底：未命中任何具体科目/指标时，「收益/利润/盈利/赚钱」→ 盈利能力指标组。
+    # 这样「收益很高吗」不再是 CLARIFY，而是算毛利率/净利率/ROA/ROE 回答盈利水平。
+    if not metric_codes and not standard_items and any(w in query for w in _PROFITABILITY_WORDS):
+        metric_codes = list(GROUPS["盈利能力"])
 
     reasons: list[str] = []
     if any(w in query for w in _ATTRIBUTION_WORDS):

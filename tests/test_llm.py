@@ -84,3 +84,53 @@ def test_graph_no_llm_planner_falls_back_to_rules():
     g = AgentGraph(_store())
     out = g.run("为什么经营现金流下降", company_name="测试公司")
     assert len(out["tool_results"]) == 4
+
+
+# -- LLM 兜底：规则未命中（CLARIFY）时交给 LLM 理解 ---------------------------------
+def test_graph_llm_fallback_on_clarify():
+    # 规则 CLARIFY 的口语问法，靠 LLM 兜底落到工具调用（而非返回「无法理解」）
+    llm = LLMPlanner(
+        invoke=lambda system, user, tools: [
+            {"name": "query_financial_fact", "args": {"company_name": "错误公司", "fiscal_year": 2024}}
+        ]
+    )
+    g = AgentGraph(_store(), llm_planner=llm)
+    out = g.run("这公司的财务状况健康吗", company_name="测试公司")
+    assert out["status"] == "success"
+    assert len(out["tool_results"]) == 1
+    assert out["tool_results"][0].tool == "query_financial_fact"
+
+
+def test_graph_llm_fallback_forces_resolved_company():
+    # 公司名以规则消歧结果为准，覆盖 LLM 填错的公司名
+    llm = LLMPlanner(
+        invoke=lambda system, user, tools: [
+            {"name": "query_financial_fact", "args": {"company_name": "错误公司", "fiscal_year": 2024}}
+        ]
+    )
+    g = AgentGraph(_store(), llm_planner=llm)
+    out = g.run("这公司的财务状况健康吗", company_name="测试公司")
+    # 结果应来自「测试公司」，而非 LLM 填的「错误公司」
+    assert out["tool_results"][0].data
+    assert all(f.company_name == "测试公司" for f in out["tool_results"][0].data)
+
+
+def test_graph_llm_fallback_keeps_clarify_when_no_tools():
+    # LLM 也没给出工具调用 → 维持规则澄清，不硬凑答案
+    llm = LLMPlanner(invoke=lambda system, user, tools: [])
+    g = AgentGraph(_store(), llm_planner=llm)
+    out = g.run("随便聊聊天气", company_name="测试公司")
+    assert out["status"] == "need_clarification"
+    assert out["needs_clarification"]
+
+
+def test_graph_rule_hit_skips_llm_fallback():
+    # 规则已命中的问法不触发 LLM 兜底（规则优先，快路径零成本）
+    llm = LLMPlanner(
+        invoke=lambda system, user, tools: [{"name": "validate_result", "args": {}}]
+    )
+    g = AgentGraph(_store(), llm_planner=llm)
+    out = g.run("2024 年营收多少", company_name="测试公司")
+    tools = [r.tool for r in out["tool_results"]]
+    assert "validate_result" not in tools
+    assert "query_financial_fact" in tools
