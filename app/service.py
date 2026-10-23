@@ -11,6 +11,7 @@ FastAPI 层（main.py）与测试共用，避免业务逻辑散在接口里。
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -193,7 +194,12 @@ class FinanceService:
         用户不提公司名时则续接上次分析对象。
 
         阶段 5：user 传入时透传给 graph（工具层权限校验 + 审计）。
+
+        thread_id 未显式传入时生成独立线程：避免多个独立请求共享 "default" 线程，
+        导致 periods 跨请求继承（「收益很高吗」继承上一轮「2024 营收」的年份，查错期间）。
+        多轮续接由前端显式传 thread_id（localStorage）实现。
         """
+        thread_id = thread_id or uuid.uuid4().hex
         graph = self._get_graph()
         out = graph.run(
             query,

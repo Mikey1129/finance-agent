@@ -98,6 +98,25 @@ def test_ask_remembers_last_company():
     assert "资产总计" in body["answer"] and "10,000.00" in body["answer"]
 
 
+def test_ask_without_thread_id_generates_unique_thread():
+    # 未显式传 thread_id 时生成独立线程，避免共享 "default" 导致 periods 跨请求继承
+    client = _client()
+    _upload(client)
+    t1 = client.post("/api/ask", json={"query": "测试公司2025年资产总计是多少？"}).json()["thread_id"]
+    t2 = client.post("/api/ask", json={"query": "测试公司2025年资产总计是多少？"}).json()["thread_id"]
+    assert t1 != t2
+
+
+def test_ask_with_thread_id_preserves_thread():
+    # 显式传 thread_id 则沿用，供前端多轮续接
+    client = _client()
+    _upload(client)
+    t = client.post(
+        "/api/ask", json={"query": "测试公司2025年资产总计是多少？", "thread_id": "abc123"}
+    ).json()["thread_id"]
+    assert t == "abc123"
+
+
 def test_overview_returns_metrics():
     client = _client()
     _upload(client)
