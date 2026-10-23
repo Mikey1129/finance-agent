@@ -39,6 +39,7 @@ class MetricDefinition:
     point_item: str = ""                # turnover：时点科目（应收/存货，期初期末取平均）
     description: str = ""               # 口径说明
     is_signal: bool = False             # 财务质量组：信号而非结论
+    is_percent: bool = False            # 结果按百分比显示（ratio 类如流动/速动比率按倍数显示）
 
 
 @dataclass
@@ -73,12 +74,14 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         "营收增长率 = (本期营业收入 - 上期营业收入) / |上期营业收入|",
         StatementType.INCOME_STATEMENT, "growth", item="revenue",
         description="同比口径，分母用上期绝对值。",
+        is_percent=True,
     ),
     "net_profit_growth": MetricDefinition(
         "net_profit_growth", "净利润增长率", "成长能力",
         "净利润增长率 = (本期净利润 - 上期净利润) / |上期净利润|",
         StatementType.INCOME_STATEMENT, "growth", item="net_profit",
         description="同比口径，分母用上期绝对值。",
+        is_percent=True,
     ),
     # -- 盈利能力 ----------------------------------------------------------
     "gross_margin": MetricDefinition(
@@ -86,12 +89,14 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         "毛利率 = (营业收入 - 营业成本) / 营业收入",
         StatementType.INCOME_STATEMENT, "ratio",
         numerator=("revenue",), subtract=("cost_of_revenue",), denominator=("revenue",),
+        is_percent=True,
     ),
     "net_margin": MetricDefinition(
         "net_margin", "净利率", "盈利能力",
         "净利率 = 净利润 / 营业收入",
         StatementType.INCOME_STATEMENT, "ratio",
         numerator=("net_profit",), denominator=("revenue",),
+        is_percent=True,
     ),
     "roa": MetricDefinition(
         "roa", "总资产收益率", "盈利能力",
@@ -99,6 +104,7 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         StatementType.INCOME_STATEMENT, "ratio",
         numerator=("net_profit",), denominator=("total_assets",),
         description="简化口径：分母用期末总资产（严格应为平均总资产）。",
+        is_percent=True,
     ),
     "roe": MetricDefinition(
         "roe", "净资产收益率", "盈利能力",
@@ -106,6 +112,7 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         StatementType.INCOME_STATEMENT, "ratio",
         numerator=("net_profit",), denominator=("total_equity",),
         description="简化口径：分子用含少数股东损益的净利润、分母用含少数股东权益的期末所有者权益（二者口径自洽；严格杜邦口径应为归母净利润/平均归母权益）。",
+        is_percent=True,
     ),
     # -- 偿债能力 ----------------------------------------------------------
     "debt_to_asset_ratio": MetricDefinition(
@@ -113,6 +120,7 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         "资产负债率 = 负债合计 / 资产总计",
         StatementType.BALANCE_SHEET, "ratio",
         numerator=("total_liabilities",), denominator=("total_assets",),
+        is_percent=True,
     ),
     "current_ratio": MetricDefinition(
         "current_ratio", "流动比率", "偿债能力",

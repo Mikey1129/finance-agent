@@ -34,10 +34,12 @@ from agent.hooks import (
     SourceIntegrityHook,
 )
 from agent.planner import ComplexityLevel, Planner, assess_complexity
+from agent.reviewer import ConclusionReviewer
 from agent.router import route
 from agent.state import AgentState, Intent
 from agent.tools import SourceRef, ToolResult, ToolStatus, build_tools
 from auth import AccessPolicy, AuditLog, User
+from finance.metrics import METRIC_DEFINITIONS
 from finance.store import Store
 from finance.taxonomy import item_zh
 from domain import AnalysisRun, EvidenceChunk, FinancialFact, ToolCallRecord
@@ -78,6 +80,7 @@ class AgentGraph:
         rule_version: str | None = None,
         llm_planner: LLMPlanner | None = None,
         attribution_writer: AttributionWriter | None = None,
+        reviewer: ConclusionReviewer | None = None,
         access_policy: AccessPolicy | None = None,
         audit_log: AuditLog | None = None,
     ):
@@ -88,6 +91,7 @@ class AgentGraph:
         self.rule_version = rule_version or _cfg_rule_version()
         self.llm_planner = llm_planner
         self.attribution_writer = attribution_writer
+        self.reviewer = reviewer
         self.access_policy = access_policy
         self.audit_log = audit_log
         self.registry = build_tools(store, self.chunks)
@@ -290,6 +294,11 @@ class AgentGraph:
         ):
             draft = self.attribution_writer.write(pack, self.context_policy)
             if draft is not None:
+                # 输出前校验 gate：reviewer 批判性审查初稿，返回修正版；失败降级用初稿。
+                if self.reviewer is not None:
+                    reviewed = self.reviewer.review(draft, pack, self.context_policy)
+                    if reviewed is not None:
+                        draft = reviewed
                 report, sources = render_report(draft)
                 return {
                     "final_answer": report,
@@ -297,7 +306,18 @@ class AgentGraph:
                     "status": "success",
                 }
 
-        parts = [self._summarize(r) for r in state.get("tool_results", []) if r.status is ToolStatus.SUCCESS]
+        # 指标问法（METRIC_ANALYSIS）只汇总指标计算结果，跳过 query_financial_fact 的
+        # 原始事实（否则全部事实被列出，真正的指标结论被挤到末尾）。
+        results = state.get("tool_results", [])
+        if intent is Intent.METRIC_ANALYSIS:
+            metric_tools = {"compute_metric", "compare_periods", "compare_companies"}
+            parts = [
+                self._summarize(r)
+                for r in results
+                if r.status is ToolStatus.SUCCESS and r.tool in metric_tools
+            ]
+        else:
+            parts = [self._summarize(r) for r in results if r.status is ToolStatus.SUCCESS]
         if state.get("missing_evidence"):
             parts.append("⚠ 缺失证据: " + "；".join(state["missing_evidence"]))
         if state.get("contradictions"):
@@ -323,7 +343,15 @@ class AgentGraph:
                 rows.append(f"{zh}{year} = {f.value:,.2f} 元")
             return "；".join(rows) if rows else "未查到财务事实"
         if r.tool == "compute_metric":
-            rows = [f"{m.name}={m.value:.4f}" for m in r.data.values() if m.computed]
+            rows = []
+            for m in r.data.values():
+                if not m.computed:
+                    continue
+                defn = METRIC_DEFINITIONS.get(m.code)
+                if defn is not None and defn.is_percent:
+                    rows.append(f"{m.name}={m.value:.2%}")
+                else:
+                    rows.append(f"{m.name}={m.value:,.2f}")
             return "指标: " + "; ".join(rows) if rows else "指标: 无（数据不足）"
         if r.tool == "retrieve_evidence":
             return f"检索到 {len(r.data)} 条文本证据"

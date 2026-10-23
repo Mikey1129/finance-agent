@@ -23,10 +23,11 @@ from agent.attribution import build_attribution_writer
 from agent.checkpoint import Checkpointer
 from agent.llm import build_llm_planner
 from agent.memory import SqliteMemoryStore
+from agent.reviewer import build_reviewer
 from agent.skills import build_skills, list_skill_meta
 from auth import AccessPolicy, AuditLog, User
 from domain import FinancialFact, StatementType
-from finance.metrics import compute_metrics, compute_series
+from finance.metrics import METRIC_DEFINITIONS, compute_metrics, compute_series
 from finance.store import Store
 from ingestion.excel_parser import parse_csv, parse_excel
 from ingestion.vision_parser import build_vision_parser, parse_pdf_with_fallback
@@ -38,13 +39,6 @@ _STATEMENTS = (StatementType.BALANCE_SHEET, StatementType.INCOME_STATEMENT, Stat
 
 # 指标概览里做多期趋势的关键指标
 _OVERVIEW_TREND_CODES = ["gross_margin", "net_margin", "roe", "revenue_growth", "net_profit_growth"]
-
-# 结果按百分比显示的指标（其余 ratio 类如流动/速动比率、OCF/净利比按「倍数」显示）
-_PCT_CODES = {
-    "gross_margin", "net_margin", "roa", "roe",
-    "debt_to_asset_ratio", "revenue_growth", "net_profit_growth",
-}
-
 
 def _serialize(obj: Any) -> Any:
     """把工具返回的嵌套数据转成 JSON 友好的 dict（Pydantic/dataclass 递归 dump）。"""
@@ -66,7 +60,8 @@ def _metric_card(m) -> dict:
     card = {"code": m.code, "name": m.name, "group": m.group, "is_signal": m.is_signal, "period": m.period}
     if m.computed:
         card["value"] = round(m.value, 6)
-        card["display"] = f"{m.value:.2%}" if m.code in _PCT_CODES else f"{m.value:,.2f}"
+        is_pct = METRIC_DEFINITIONS[m.code].is_percent
+        card["display"] = f"{m.value:.2%}" if is_pct else f"{m.value:,.2f}"
     else:
         card["value"] = None
         card["display"] = m.status.value
@@ -243,6 +238,7 @@ class FinanceService:
                 record_runs=True,
                 llm_planner=build_llm_planner(),
                 attribution_writer=build_attribution_writer(),
+                reviewer=build_reviewer(),
                 access_policy=self.access_policy,
                 audit_log=self.audit_log,
             )
